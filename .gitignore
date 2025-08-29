@@ -1,0 +1,26 @@
+# Node / PNPM / Yarn
+node_modules/
+pnpm-lock.yaml
+yarn.lock
+npm-debug.log*
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Env files
+.env
+.env.*      # π.χ. .env.local, .env.development
+frontend/.env
+backend/.env
+
+# Logs
+logs/
+*.log
+
+# OS / Editor
+.DS_Store
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
