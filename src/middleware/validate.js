@@ -3,6 +3,8 @@
  * Γιατί: ίδια λογική error handling σε όλο το API.
  */
 const { validationResult } = require('express-validator');
+const HttpError = require('../utils/HttpError');
+
 
 module.exports = (req, res, next) => {
   const result = validationResult(req);
@@ -15,6 +17,9 @@ module.exports = (req, res, next) => {
     if (!errors[key]) errors[key] = [];
     if (!errors[key].includes(msg)) errors[key].push(msg);
   }
+
+  console.log('[VALIDATE] 422 errors:', errors.array());
+  console.log('[VALIDATE] body at 422:', req.body);
 
   return res.status(422).json({ success: false, errors });
 };

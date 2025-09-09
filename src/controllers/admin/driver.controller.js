@@ -73,16 +73,16 @@ exports.updateDriver = async (req, res, next) => {
   const { firstName, lastName, email, phone, carNumber, password } = req.body || {};
 
   const str = (v) => (typeof v === 'string' ? v : null);
-  const t = (v) => (typeof v === 'string' ? v.trim() : null);
+  const t   = (v) => (typeof v === 'string' ? v.trim() : null);
 
-  // change detection: ΜΟΝΟ αν στάλθηκε string και διαφέρει
+  // change detection (μόνο αν στάλθηκε string και διαφέρει από το current)
   const nameChanged =
-    t(firstName) !== null && t(firstName) !== current.first_name ||
-    t(lastName)  !== null && t(lastName)  !== current.last_name;
+    (t(firstName) !== null && t(firstName) !== current.first_name) ||
+    (t(lastName)  !== null && t(lastName)  !== current.last_name);
 
-  const emailChanged = t(email) !== null && t(email) !== current.email;
-  const phoneChanged = t(phone) !== null && t(phone) !== current.phone;
-  const carChanged   = t(carNumber) !== null && t(carNumber) !== (current.car_number || '');
+  const emailChanged = t(email)      !== null && t(email)      !== current.email;
+  const phoneChanged = t(phone)      !== null && t(phone)      !== current.phone;
+  const carChanged   = t(carNumber)  !== null && t(carNumber)  !== (current.car_number || '');
 
   const incomingPwd = str(password);
   const passwordChanged =
@@ -92,17 +92,32 @@ exports.updateDriver = async (req, res, next) => {
     return next(new HttpError('Δεν έχετε κάνει καμία αλλαγή στα στοιχεία.', 400));
   }
 
-  // unique email μόνο αν αλλάζει
+  // --- Προ-έλεγχοι μοναδικότητας για καθαρά μηνύματα ---
   if (emailChanged) {
-    let existsOther;
     try {
-      existsOther = await DriversRepo.existsEmailForOtherId(t(email), id);
+      const existsOther = await DriversRepo.existsEmailForOtherId(t(email), id);
+      if (existsOther) {
+        return next(new HttpError('Αυτό το email οδηγού χρησιμοποιείται ήδη.', 409));
+      }
     } catch (e) {
       return next(e);
     }
-    if (existsOther) {
-      console.log('here')
-      return next(new HttpError('Αυτό το email οδηγού χρησιμοποιείται ήδη.', 409));
+  }
+
+  if (carChanged) {
+    try {
+      let existsOtherCar = false;
+      if (typeof DriversRepo.existsCarNumberForOtherId === 'function') {
+        existsOtherCar = await DriversRepo.existsCarNumberForOtherId(t(carNumber), id);
+      } else if (typeof DriversRepo.findByCarNumber === 'function') {
+        const found = await DriversRepo.findByCarNumber(t(carNumber));
+        existsOtherCar = !!(found && found.id !== id);
+      }
+      if (existsOtherCar) {
+        return next(new HttpError('Αυτός ο αριθμός αυτοκινήτου χρησιμοποιείται ήδη.', 409));
+      }
+    } catch (e) {
+      return next(e);
     }
   }
 
@@ -113,13 +128,23 @@ exports.updateDriver = async (req, res, next) => {
   if (emailChanged)          patch.email     = t(email);
   if (phoneChanged)          patch.phone     = t(phone);
   if (carChanged)            patch.carNumber = t(carNumber);
-  if (passwordChanged)       patch.password  = incomingPwd; // DEV ONLY — bcrypt αργότερα
+  if (passwordChanged)       patch.password  = incomingPwd; // (DEV ONLY — bcrypt αργότερα)
 
   let updated;
   try {
     updated = await DriversRepo.updateById(id, patch);
   } catch (e) {
-    return next(e); // 409 για duplicate, 500 generic
+    // Πιάσε unique constraint της DB για καθαρά μηνύματα
+    if (e && e.code === '23505') {
+      const c = (e.constraint || '').toLowerCase();
+      if (c.includes('car') || c.includes('car_number')) {
+        return next(new HttpError('Αυτός ο αριθμός αυτοκινήτου χρησιμοποιείται ήδη.', 409));
+      }
+      if (c.includes('mail') || c.includes('email')) {
+        return next(new HttpError('Αυτό το email οδηγού χρησιμοποιείται ήδη.', 409));
+      }
+    }
+    return next(e); // άλλο σφάλμα DB
   }
   if (!updated) {
     return next(new HttpError('Δεν ήταν δυνατή η ενημέρωση οδηγού.', 500));
@@ -128,20 +153,27 @@ exports.updateDriver = async (req, res, next) => {
   const safe = {
     id: updated.id,
     firstName: updated.first_name,
-    lastName: updated.last_name,
+    lastName:  updated.last_name,
     email: updated.email,
     phone: updated.phone,
     carNumber: updated.car_number,
     password: undefined,
     status: updated.status,
-    location: updated.lat == null && updated.lng == null ? null : { lat: updated.lat, lng: updated.lng },
+    location:
+      updated.lat == null && updated.lng == null
+        ? null
+        : { lat: updated.lat, lng: updated.lng },
     averageRating: Number(updated.average_rating),
     ratingCount: Number(updated.rating_count),
     role: updated.role,
-    created_at: updated.created_at
+    created_at: updated.created_at,
   };
 
-  return res.json({ success: true, message: 'Οι αλλαγές αποθηκεύτηκαν επιτυχώς!', data: { driver: safe } });
+  return res.json({
+    success: true,
+    message: 'Οι αλλαγές αποθηκεύτηκαν επιτυχώς!',
+    data: { driver: safe },
+  });
 };
 
 
@@ -167,6 +199,7 @@ exports.createDriver = async (req, res, next) => {
     return next(e);
   }
   if (exists) {
+    console.log('there')
     return next(new HttpError('Αυτό το email οδηγού χρησιμοποιείται ήδη.', 409));
   }
 

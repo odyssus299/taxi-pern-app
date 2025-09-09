@@ -8,6 +8,8 @@ const { initCleanupProblems } = require('../src/jobs/cleanupProblems');
 
 const PORT = parseInt(process.env.APP_PORT || '4000', 10);
 
+const { sweepExpiredAwaiting } = require('../src/repos/rides.repo');
+
 (async () => {
   try {
     await checkDb();
@@ -18,6 +20,22 @@ const PORT = parseInt(process.env.APP_PORT || '4000', 10);
       initCleanupRides();
       initCleanupProblems();
     // }
+
+    // 👉 Ξεκίνα το sweep ΜΕΤΑ την επιτυχή σύνδεση DB
+    const SWEEP_EVERY_MS = 1000;
+    const SWEEP_BATCH = 200;
+    const sweepTimer = setInterval(async () => {
+      try {
+        const n = await sweepExpiredAwaiting(SWEEP_BATCH);
+        // if (n > 0) console.log('[ride-sweep] advanced', n);
+      } catch (e) {
+        // κράτα τον server ζωντανό
+        // console.error('[ride-sweep] error', e);
+      }
+    }, SWEEP_EVERY_MS);
+
+    process.on('SIGTERM', () => clearInterval(sweepTimer));
+    process.on('SIGINT',  () => clearInterval(sweepTimer));
 
     app.listen(PORT, () => {
       const opts = pool.options || {};

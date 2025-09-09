@@ -376,3 +376,25 @@ CREATE INDEX IF NOT EXISTS reviews_created_at_idx  ON public.reviews(created_at)
 
 CREATE INDEX IF NOT EXISTS problems_created_at_idx
   ON public.problems (created_at);
+
+  -- βάλε χρόνο λήξης στην προσφορά του candidate
+ALTER TABLE public.ride_candidates
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+-- επιτρέπουμε ΜΟΝΟ έναν awaiting ανά ride
+CREATE UNIQUE INDEX IF NOT EXISTS ride_candidates_one_awaiting_per_ride
+  ON public.ride_candidates (ride_id)
+  WHERE status = 'awaiting_response';
+
+-- γρήγορη αναζήτηση ληγμένων awaiting
+CREATE INDEX IF NOT EXISTS ride_candidates_awaiting_expires_idx
+  ON public.ride_candidates (expires_at)
+  WHERE status = 'awaiting_response';
+
+-- συχνό lookup: "τί περιμένει απάντηση για τον Χ οδηγό;"
+CREATE INDEX IF NOT EXISTS ride_candidates_driver_status_idx
+  ON public.ride_candidates (driver_id, status);
+
+  CREATE UNIQUE INDEX IF NOT EXISTS ride_candidates_one_awaiting_per_ride
+  ON public.ride_candidates (ride_id)
+  WHERE status = 'awaiting_response';
