@@ -87,6 +87,20 @@ exports.logout = async (req, res, next) => {
     });
   }
 
+  // 2a) ΝΕΟ: Μπλοκ αν υπάρχει awaiting_response/pending πρόταση στον οδηγό
+  try {
+    // χρησιμοποιούμε το ήδη υπάρχον repo που φέρνει το “τρέχον” pending για τον οδηγό
+    const pending = await RidesRepo.findLatestAwaitingForDriver(id);
+    if (pending) {
+      return res.status(400).json({
+        success: false,
+        message: 'Έχετε εκκρεμή πρόταση διαδρομής. Απαντήστε (Αποδοχή/Άρνηση) πριν αποσυνδεθείτε.'
+      });
+    }
+  } catch (_e) {
+    return next(new HttpError('Σφάλμα κατά τον έλεγχο εκκρεμούς πρότασης.', 500));
+  }
+
   // 3) TRX: απόρριψη εκκρεμών rides + set offline
   const client = await pool.connect();
   let updated;

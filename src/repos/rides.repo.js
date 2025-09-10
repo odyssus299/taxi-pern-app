@@ -273,7 +273,7 @@ async function monthlyStatsByDriver(driverId) {
     pickupAddress,
     pickupLat,
     pickupLng,
-    nearestLimit = 10
+    nearestLimit = 15
   }) {
     const lat = Number(pickupLat);
     const lng = Number(pickupLng);
@@ -281,7 +281,7 @@ async function monthlyStatsByDriver(driverId) {
       throw new HttpError('Μη έγκυρες συντεταγμένες.', 400);
     }
   
-    // 10 κοντινότεροι
+    // 15 κοντινότεροι
     const candidates = await DriversRepo.findNearestAvailable(lat, lng, nearestLimit);
     if (!candidates || candidates.length === 0) {
       throw new HttpError('Δεν βρέθηκε διαθέσιμος οδηγός κοντά σας.', 404);
@@ -424,7 +424,7 @@ async function respond(driverId, response) {
   try {
     await client.query('BEGIN');
 
-    // Βρες το pending ride που είναι “πάνω” στον οδηγό
+    // 1) Βρες το pending ride που είναι "πάνω" στον οδηγό
     const findSql = `
       SELECT r.id AS ride_id, r.driver_id, r.status
       FROM public.rides r
@@ -439,7 +439,7 @@ async function respond(driverId, response) {
       return { notFound: true };
     }
 
-    // Τρέχων candidate (μόνο αν είναι ακόμη σε awaiting_response ΚΑΙ δεν έχει λήξει)
+    // 2) Τρέχων candidate για τον οδηγό — ΠΡΕΠΕΙ να είναι awaiting_response και όχι ληγμένος
     const candSql = `
       SELECT id, position
       FROM public.ride_candidates
@@ -457,7 +457,7 @@ async function respond(driverId, response) {
     }
 
     if (response === 'accept') {
-      // Μαρκάρουμε accepted, ξεκινάει διαδρομή
+      // 3A) Αποδοχή
       await client.query(
         `UPDATE public.ride_candidates
          SET status='accepted', responded_at=NOW()
@@ -476,11 +476,12 @@ async function respond(driverId, response) {
          WHERE id=$1`,
         [driverId]
       );
+
       await client.query('COMMIT');
       return { accepted: true, rideId: current.ride_id };
     }
 
-    // reject: μαρκάρουμε και προωθούμε στον επόμενο
+    // 3B) Απόρριψη: μαρκάρουμε rejected τον τρέχοντα
     await client.query(
       `UPDATE public.ride_candidates
        SET status='rejected', responded_at=NOW()
@@ -488,24 +489,64 @@ async function respond(driverId, response) {
       [cand.id]
     );
 
-    // Βρες επόμενο queued
+    // 3C) ΝΕΟ: σβήσε από το ΤΡΕΧΟΝ ride όσους είναι queued εδώ
+    //     αλλά έχουν accepted σε ΑΛΛΟ ride που είναι ongoing
+    await client.query(
+      `
+      DELETE FROM public.ride_candidates rc
+      USING public.ride_candidates rc2, public.rides r2
+      WHERE rc.ride_id = $1
+        AND rc.status  = 'queued'
+        AND rc2.driver_id = rc.driver_id
+        AND r2.id = rc2.ride_id
+        AND rc2.status = 'accepted'
+        AND r2.status  = 'ongoing'
+      `,
+      [current.ride_id]
+    );
+
+    // 4) Βρες επόμενο QUEUED που:
+    //    - ΔΕΝ έχει accepted αλλού (σε ride που τρέχει)
+    //    - ΔΕΝ έχει ενεργό awaiting_response αλλού (σε pending ride)
+    //    - (προαιρετικά) ο driver είναι διαθέσιμος
     const nextSql = `
-      SELECT driver_id, position
-      FROM public.ride_candidates
-      WHERE ride_id = $1 AND status='queued'
-      ORDER BY position ASC
+      SELECT rc.driver_id, rc.position
+      FROM public.ride_candidates rc
+      JOIN public.drivers d ON d.id = rc.driver_id
+      WHERE rc.ride_id = $1
+        AND rc.status  = 'queued'
+        AND d.status   = 'available'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.ride_candidates rc2
+          JOIN public.rides r2 ON r2.id = rc2.ride_id
+          WHERE rc2.driver_id = rc.driver_id
+            AND (
+              (
+                rc2.status = 'awaiting_response'
+                AND (rc2.expires_at IS NULL OR rc2.expires_at > NOW())
+                AND r2.status = 'pending'
+              )
+              OR
+              (
+                rc2.status = 'accepted'
+                AND r2.status = 'ongoing'
+              )
+            )
+        )
+      ORDER BY rc.position ASC
       LIMIT 1
+      FOR UPDATE SKIP LOCKED
     `;
     const { rows: nrows } = await client.query(nextSql, [current.ride_id]);
     const next = nrows[0];
 
     if (!next) {
-      // Εξαντλήθηκαν όλοι
+      // 5) Δεν υπάρχει επιλέξιμος επόμενος
       await client.query(
         `UPDATE public.rides SET status='rejected' WHERE id=$1`,
         [current.ride_id]
       );
-      // Καθαρισμός ουράς αυτού του ride
       await client.query(
         `DELETE FROM public.ride_candidates WHERE ride_id = $1`,
         [current.ride_id]
@@ -515,16 +556,18 @@ async function respond(driverId, response) {
       return { exhausted: true, rideId: current.ride_id };
     }
 
-    // Αναθέτουμε στον επόμενο (ΝΕΟ: assigned_at + expires_at)
-    const ttlSec = getTtlSec(); // π.χ. 10–15s από .env (RIDE_AWAIT_TTL_SEC)
+    // 6) Ανάθεσε στον επόμενο και βάλε νέο TTL
+    const ttlSec = getTtlSec();
     await client.query(
       `UPDATE public.ride_candidates
        SET status='awaiting_response',
            assigned_at=NOW(),
-           expires_at=NOW() + ($3 || ' seconds')::interval
+           expires_at = NOW() + ($3 || ' seconds')::interval
        WHERE ride_id=$1 AND driver_id=$2`,
       [current.ride_id, next.driver_id, String(ttlSec)]
     );
+
+    // 7) Μετάφερε το ride στον νέο οδηγό
     await client.query(
       `UPDATE public.rides
        SET driver_id=$2
@@ -536,13 +579,15 @@ async function respond(driverId, response) {
     return { forwarded: true, rideId: current.ride_id, toDriverId: next.driver_id };
   } catch (e) {
     await client.query('ROLLBACK');
-    console.error('[respond][driverId=%s][response=%s] error:', driverId, response, e);
     if (e instanceof HttpError) throw e;
     throw new HttpError('Προέκυψε σφάλμα κατά την απάντηση σε αίτημα διαδρομής.', 500);
   } finally {
     client.release();
   }
 }
+
+
+
 
 
 
@@ -637,12 +682,16 @@ async function findByReviewToken(token) {
 
 async function sweepExpiredAwaiting(limit = 200) {
   // Φέρνουμε λίστα ληγμένων "awaiting_response" με σειρά παλαιότητας.
+  // (προαιρετικά, φιλτράρουμε μόνο για rides που είναι ακόμη pending)
   const { rows } = await pool.query(
     `
     SELECT rc.id, rc.ride_id, rc.driver_id
     FROM public.ride_candidates rc
+    JOIN public.rides r ON r.id = rc.ride_id
     WHERE rc.status = 'awaiting_response'
+      AND rc.expires_at IS NOT NULL
       AND rc.expires_at <= NOW()
+      AND r.status = 'pending'
     ORDER BY rc.expires_at ASC
     LIMIT $1
     `,
@@ -656,7 +705,7 @@ async function sweepExpiredAwaiting(limit = 200) {
     try {
       await client.query('BEGIN');
 
-      // Ξανα-κλείδωσέ τον συγκεκριμένο candidate (αν στο μεταξύ άλλαξε, το SKIP LOCKED τον αφήνει)
+      // Ξανα-κλείδωσε τον συγκεκριμένο candidate, για να μην συγκρουστείς με άλλο worker.
       const { rows: lockRows } = await client.query(
         `
         SELECT id, ride_id, driver_id
@@ -680,13 +729,49 @@ async function sweepExpiredAwaiting(limit = 200) {
         [rc.id]
       );
 
-      // 2) Βρίσκουμε επόμενο queued
+      // 1bis) ΝΕΟ: καθάρισε από το ΤΡΕΧΟΝ ride όσους είναι accepted σε ΑΛΛΟ ride (ongoing)
+      await client.query(
+        `
+        DELETE FROM public.ride_candidates rc
+        USING public.ride_candidates rc2, public.rides r2
+        WHERE rc.ride_id = $1
+          AND rc.status  = 'queued'
+          AND rc2.driver_id = rc.driver_id
+          AND r2.id = rc2.ride_id
+          AND rc2.status = 'accepted'
+          AND r2.status  = 'ongoing'
+        `,
+        [rc.ride_id]
+      );
+
+      // 2) Βρίσκουμε τον επόμενο QUEUED, προσπερνώντας όσους:
+      //    - έχουν ενεργό awaiting_response αλλού (και το άλλο ride είναι pending)
+      //    - ή είναι accepted/ongoing αλλού
       const { rows: nextRows } = await client.query(
         `
-        SELECT driver_id
-        FROM public.ride_candidates
-        WHERE ride_id=$1 AND status='queued'
-        ORDER BY position ASC
+        SELECT rc2.driver_id
+        FROM public.ride_candidates rc2
+        WHERE rc2.ride_id = $1
+          AND rc2.status  = 'queued'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.ride_candidates x
+            JOIN public.rides r2 ON r2.id = x.ride_id
+            WHERE x.driver_id = rc2.driver_id
+              AND (
+                (
+                  x.status = 'awaiting_response'
+                  AND (x.expires_at IS NULL OR x.expires_at > NOW())
+                  AND r2.status = 'pending'
+                )
+                OR
+                (
+                  x.status = 'accepted'
+                  AND r2.status = 'ongoing'
+                )
+              )
+          )
+        ORDER BY rc2.position ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
         `,
@@ -706,6 +791,7 @@ async function sweepExpiredAwaiting(limit = 200) {
       } else {
         const nextDriverId = nextRows[0].driver_id;
 
+        // 3) Ανάθεση στον επόμενο + νέος χρόνος λήξης
         await client.query(
           `UPDATE public.ride_candidates
            SET status='awaiting_response',
@@ -714,6 +800,8 @@ async function sweepExpiredAwaiting(limit = 200) {
            WHERE ride_id=$1 AND driver_id=$3`,
           [rc.ride_id, String(getTtlSec()), nextDriverId]
         );
+
+        // ενημέρωσε και το rides ποιος είναι ο "ενεργός" οδηγός
         await client.query(
           `UPDATE public.rides
            SET driver_id=$2
@@ -735,8 +823,34 @@ async function sweepExpiredAwaiting(limit = 200) {
 }
 
 
+// Βρες ongoing διαδρομή για οδηγό (αν υπάρχει)
+async function findOngoingForDriver(driverId) {
+  const sql = `
+    SELECT
+      r.id,
+      r.driver_id,
+      r.status,
+      r.pickup_lat,
+      r.pickup_lng,
+      r.pickup_address,
+      r.created_at,
+      r.user_id,
+      COALESCE(r.requester_first_name, u.first_name) AS customer_first_name,
+      COALESCE(r.requester_last_name,  u.last_name)  AS customer_last_name,
+      COALESCE(r.requester_phone,      u.phone)      AS customer_phone
+    FROM public.rides r
+    LEFT JOIN public.users u ON u.id = r.user_id
+    WHERE r.driver_id = $1 AND r.status = 'ongoing'
+    ORDER BY r.created_at DESC, r.id DESC
+    LIMIT 1
+  `;
+  try {
+    const { rows } = await pool.query(sql, [driverId]);
+    return rows[0] || null;
+  } catch (_e) {
+    throw new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση ενεργής διαδρομής.', 500);
+  }
+}
 
 
-
-  
-  module.exports = { monthlyStatsByDriver, rejectPendingByDriverId, monthlySuccessByDriver, insertPendingRide, findLatestPendingForDriver, updateStatusById, findByIdOwnedByDriver, completeRide, markProblematic, pendingForDriver, createWithCandidates, findLatestAwaitingForDriver, acceptByDriver, rejectByDriverAndAdvance, findByReviewToken, markReviewSent, getReviewDeliveryDetails, markReviewSent, sweepExpiredAwaiting  };
+module.exports = { monthlyStatsByDriver, rejectPendingByDriverId, monthlySuccessByDriver, insertPendingRide, findLatestPendingForDriver, updateStatusById, findByIdOwnedByDriver, completeRide, markProblematic, pendingForDriver, createWithCandidates, findLatestAwaitingForDriver, acceptByDriver, rejectByDriverAndAdvance, findByReviewToken, markReviewSent, getReviewDeliveryDetails, markReviewSent, sweepExpiredAwaiting, findOngoingForDriver  };

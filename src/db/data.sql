@@ -398,3 +398,23 @@ CREATE INDEX IF NOT EXISTS ride_candidates_driver_status_idx
   CREATE UNIQUE INDEX IF NOT EXISTS ride_candidates_one_awaiting_per_ride
   ON public.ride_candidates (ride_id)
   WHERE status = 'awaiting_response';
+
+  -- 1) Επόμενος queued με σωστή σειρά
+CREATE INDEX IF NOT EXISTS ride_candidates_next_idx
+  ON public.ride_candidates (ride_id, status, position)
+  WHERE status = 'queued';
+
+-- 2a) Για NOT EXISTS: active awaiting αλλού
+CREATE INDEX IF NOT EXISTS ride_candidates_driver_awaiting_exp_idx
+  ON public.ride_candidates (driver_id, expires_at)
+  WHERE status = 'awaiting_response';
+
+-- 2b) Για NOT EXISTS: accepted αλλού
+CREATE INDEX IF NOT EXISTS ride_candidates_driver_accepted_idx
+  ON public.ride_candidates (driver_id)
+  WHERE status = 'accepted';
+
+-- 7) (Προαιρετικά – μόνο αν βάλεις bounding box)
+CREATE INDEX IF NOT EXISTS drivers_available_lat_lng_idx
+  ON public.drivers (lat, lng)
+  WHERE status = 'available';

@@ -280,6 +280,16 @@ async function create(driver) {
       WHERE d.status = 'available'
         AND d.lat IS NOT NULL
         AND d.lng IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.ride_candidates rc
+          JOIN public.rides r ON r.id = rc.ride_id
+          WHERE rc.driver_id = d.id
+            AND rc.status   = 'awaiting_response'
+            AND r.status    = 'pending'
+            -- θεωρούμε ενεργή την πρόταση όσο δεν έχει απαντηθεί/λήξει
+            AND (rc.expires_at IS NULL OR rc.expires_at > NOW())
+        )
       ORDER BY dist_km ASC
       LIMIT $3
     `;
@@ -290,6 +300,7 @@ async function create(driver) {
       throw new HttpError('Προέκυψε σφάλμα κατά την εύρεση κοντινών οδηγών.', 500);
     }
   }
+  
 
   async function findByCarNumber(carNumber) {
     const plate = String(carNumber || '').trim();

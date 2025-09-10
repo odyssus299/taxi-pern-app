@@ -116,6 +116,51 @@ exports.respondToRideRequest = async (req, res, next) => {
   });
 };
 
+exports.getActiveRide = async (req, res, next) => {
+  const driverId = parseInt(String(req.params.id), 10);
+  if (!Number.isInteger(driverId) || driverId <= 0) {
+    return next(new HttpError('Μη έγκυρο αναγνωριστικό οδηγού.', 400));
+  }
+
+  // Έλεγχος οδηγού
+  let driver;
+  try {
+    driver = await DriversRepo.findById(driverId);
+  } catch {
+    return next(new HttpError('Προέκυψε σφάλμα κατά την αναζήτηση οδηγού.', 500));
+  }
+  if (!driver || driver.role !== 'driver') {
+    return res.status(404).json({ success: false, message: 'Ο οδηγός δεν βρέθηκε.' });
+  }
+
+  // Ενεργή διαδρομή;
+  let ride;
+  try {
+    ride = await RidesRepo.findOngoingForDriver(driverId);
+  } catch {
+    return next(new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση ενεργής διαδρομής.', 500));
+  }
+
+  if (!ride) {
+    return res.json({ success: true, data: null });
+  }
+
+  return res.json({
+    success: true,
+    data: {
+      rideId: String(ride.id),
+      customerLocation:
+        ride.pickup_lat == null || ride.pickup_lng == null
+          ? null
+          : { lat: ride.pickup_lat, lng: ride.pickup_lng },
+      customerFirstName: ride.customer_first_name ?? '',
+      customerLastName:  ride.customer_last_name  ?? '',
+      customerPhone:     ride.customer_phone      ?? '',
+      customerAddress:   ride.pickup_address      ?? ''
+    }
+  });
+};
+
 // === Ολοκλήρωση διαδρομής από οδηγό ===
 // POST /api/driver/:id/ride/complete { rideId, dropoffLat?, dropoffLng? }
 exports.completeRide = async (req, res, next) => {

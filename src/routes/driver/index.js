@@ -48,6 +48,7 @@ router.post(
 );
 
 router.get('/:id/ride-request', Ride.getRideProposal);
+router.get('/:id/ride-active', Ride.getActiveRide);
 
 router.post(
     '/:id/ride-response',
