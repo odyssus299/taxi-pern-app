@@ -21,6 +21,7 @@ exports.register = async (req, res, next) => {
       return next(new HttpError('Αυτό το email χρησιμοποιείται ήδη.', 409));
     }
   } catch (e) {
+    console.log(e)
     return next(e);
   }
 
@@ -29,6 +30,7 @@ exports.register = async (req, res, next) => {
   try {
     row = await UsersRepo.create({ firstName, lastName, email, phone, password }); // bcrypt αργότερα
   } catch (e) {
+    console.log(e)
     return next(e);
   }
   if (!row) {
@@ -48,6 +50,7 @@ exports.register = async (req, res, next) => {
       lastName: row.last_name
     });
   } catch (_e) {
+    console.log(_e)
     return next(new HttpError('Προέκυψε σφάλμα κατά τη δημιουργία συνεδρίας χρήστη.', 500));
   }
 

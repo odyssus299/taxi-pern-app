@@ -68,6 +68,7 @@ exports.getRideStatus = async (req, res, next) => {
     // Επιστρέφει { state, attempt, total, updatedAt, assignedDriver? }
     status = await RidesRepo.getPublicRideStatus(rideId);
   } catch (_e) {
+    console.log(_e)
     return next(new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση κατάστασης διαδρομής.', 500));
   }
 

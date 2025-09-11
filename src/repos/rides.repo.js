@@ -852,5 +852,197 @@ async function findOngoingForDriver(driverId) {
   }
 }
 
+async function getPublicRideStatus(rideIdRaw) {
+  const rideId = Number(rideIdRaw);
+  if (!Number.isFinite(rideId) || rideId <= 0) {
+    // ο controller ήδη ελέγχει το id, εδώ το κρατάμε safe
+    throw new HttpError('Μη έγκυρο id διαδρομής.', 400);
+  }
 
-module.exports = { monthlyStatsByDriver, rejectPendingByDriverId, monthlySuccessByDriver, insertPendingRide, findLatestPendingForDriver, updateStatusById, findByIdOwnedByDriver, completeRide, markProblematic, pendingForDriver, createWithCandidates, findLatestAwaitingForDriver, acceptByDriver, rejectByDriverAndAdvance, findByReviewToken, markReviewSent, getReviewDeliveryDetails, markReviewSent, sweepExpiredAwaiting, findOngoingForDriver  };
+  // --- 1) Φέρε τη διαδρομή
+  let ride;
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT id, driver_id, status, created_at, completed_at
+      FROM public.rides
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [rideId]
+    );
+    ride = rows[0] || null;
+  } catch (_e) {
+    throw new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση διαδρομής.', 500);
+  }
+
+  if (!ride) {
+    // ο controller περιμένει null για να δώσει 404
+    return null;
+  }
+
+  // --- 2) Συνολικοί υποψήφιοι
+  let total = null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM public.ride_candidates WHERE ride_id = $1`,
+      [ride.id]
+    );
+    total = rows[0]?.total ?? null;
+  } catch (_e) {
+    throw new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση υποψηφίων οδηγών.', 500);
+  }
+
+  const status = String(ride.status);
+
+  // --- 3) Κατάσταση PENDING → 'awaiting_response'
+  if (status === 'pending') {
+    let cur = null;
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT position, assigned_at
+        FROM public.ride_candidates
+        WHERE ride_id = $1 AND status = 'awaiting_response'
+        ORDER BY position ASC
+        LIMIT 1
+        `,
+        [ride.id]
+      );
+      cur = rows[0] || null;
+    } catch (_e) {
+      throw new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση κατάστασης υποψηφίου.', 500);
+    }
+
+    const attempt = cur?.position ?? null;
+    const updatedAt = cur?.assigned_at ? new Date(cur.assigned_at).toISOString() : new Date().toISOString();
+
+    return {
+      state: 'awaiting_response',
+      attempt,
+      total,
+      updatedAt,
+      assignedDriver: null, // στο awaiting δεν δείχνουμε οδηγό
+    };
+  }
+
+  // --- 4) Κατάσταση ONGOING → 'accepted' + στοιχεία οδηγού
+  if (status === 'ongoing') {
+    // accepted candidate (για position/χρόνο)
+    let accepted = null;
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT position, responded_at
+        FROM public.ride_candidates
+        WHERE ride_id = $1 AND status = 'accepted'
+        ORDER BY responded_at DESC NULLS LAST
+        LIMIT 1
+        `,
+        [ride.id]
+      );
+      accepted = rows[0] || null;
+    } catch (_e) {
+      throw new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση αποδεχθέντος υποψηφίου.', 500);
+    }
+
+    // στοιχεία οδηγού (απαραίτητα)
+    let driver = null;
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT
+          id,
+          first_name,
+          last_name,
+          phone,
+          car_number,
+          COALESCE(average_rating, 0) AS average_rating,
+          COALESCE(rating_count, 0)   AS rating_count
+        FROM public.drivers
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [ride.driver_id]
+      );
+      driver = rows[0] || null;
+    } catch (_e) {
+      throw new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση οδηγού.', 500);
+    }
+
+    if (!driver) {
+      throw new HttpError('Ο οδηγός δεν βρέθηκε για τη διαδρομή.', 500);
+    }
+
+    const attempt   = accepted?.position ?? null;
+    const updatedAt = accepted?.responded_at
+      ? new Date(accepted.responded_at).toISOString()
+      : new Date().toISOString();
+
+    return {
+      state: 'accepted',
+      attempt,
+      total,
+      updatedAt,
+      assignedDriver: {
+        id: String(driver.id),
+        firstName: driver.first_name,
+        lastName: driver.last_name,
+        carNumber: driver.car_number,
+        average_rating: Number(driver.average_rating),
+        ratingCount: Number(driver.rating_count),
+      },
+    };
+  }
+
+  // --- 5) Κατάσταση REJECTED → 'exhausted' (δεν βρέθηκε διαθέσιμος οδηγός)
+  if (status === 'rejected') {
+    // Ποιο είναι το πιο πρόσφατο timestamp από την ουρά; (για updatedAt)
+    let lastTs = null;
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT
+          MAX(
+            GREATEST(
+              COALESCE(responded_at, 'epoch'::timestamp),
+              COALESCE(assigned_at, 'epoch'::timestamp),
+              COALESCE(expires_at,  'epoch'::timestamp)
+            )
+          ) AS last_ts
+        FROM public.ride_candidates
+        WHERE ride_id = $1
+        `,
+        [ride.id]
+      );
+      lastTs = rows[0]?.last_ts ? new Date(rows[0].last_ts).toISOString() : new Date().toISOString();
+    } catch (_e) {
+      throw new HttpError('Προέκυψε σφάλμα κατά την ανάκτηση χρονικών σημείων ουράς.', 500);
+    }
+
+    return {
+      state: 'exhausted',
+      attempt: total ?? null, // τελευταία προσπάθεια = σύνολο
+      total,
+      updatedAt: lastTs,
+      assignedDriver: null,
+    };
+  }
+
+  // --- 6) Οτιδήποτε άλλο (completed / problematic / κλπ.) → 'cancelled'
+  const updatedAt =
+    ride.completed_at ? new Date(ride.completed_at).toISOString() : new Date().toISOString();
+
+  return {
+    state: 'cancelled',
+    attempt: null,
+    total,
+    updatedAt,
+    assignedDriver: null,
+  };
+}
+
+
+
+
+module.exports = { monthlyStatsByDriver, rejectPendingByDriverId, monthlySuccessByDriver, insertPendingRide, findLatestPendingForDriver, updateStatusById, findByIdOwnedByDriver, completeRide, markProblematic, pendingForDriver, createWithCandidates, findLatestAwaitingForDriver, acceptByDriver, rejectByDriverAndAdvance, findByReviewToken, markReviewSent, getReviewDeliveryDetails, markReviewSent, sweepExpiredAwaiting, findOngoingForDriver, getPublicRideStatus  };
