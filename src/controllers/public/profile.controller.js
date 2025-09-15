@@ -15,11 +15,9 @@ const bcrypt = require('bcryptjs');
 
 exports.updateMe = async (req, res, next) => {
   // Το requireUser προηγείται στο route, οπότε εδώ υποθέτουμε ότι έχουμε userId
-  const userId =
-    req.user?.id ??
-    (Number.isInteger(parseInt(req.session?.userId, 10)) ? parseInt(req.session.userId, 10) : null);
+  const userId = Number(req.user?.id);
 
-  if (!userId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
+   if (!userId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   // 1) Τρέχων χρήστης
   let current;
@@ -108,9 +106,7 @@ exports.updateMe = async (req, res, next) => {
   // 6) Auto-logout αν άλλαξε email ή/και password
   const emailChanged = Object.prototype.hasOwnProperty.call(changed, 'email');
   const passwordChanged = Object.prototype.hasOwnProperty.call(changed, 'password');
-  if (emailChanged || passwordChanged) {
-    try { req.destroySession?.(); } catch {}
-  }
+  const forceLogout = emailChanged || passwordChanged;
 
   const safe = {
     id: String(updated.id),
@@ -125,5 +121,5 @@ exports.updateMe = async (req, res, next) => {
     ? 'Τα στοιχεία εισόδου άλλαξαν. Θα χρειαστεί να συνδεθείτε ξανά.'
     : 'Οι αλλαγές αποθηκεύτηκαν επιτυχώς!';
 
-  return res.json({ success: true, message, data: { user: safe } });
+  return res.json({ success: true, message, data: { user: safe }, forceLogout });
 };

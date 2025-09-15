@@ -82,10 +82,8 @@ const RidesRepo = require('../../repos/rides.repo');
   // };
 
   exports.getMyMonthlyRideBreakdown = async (req, res, next) => {
-    const sidDriverId = req.session?.driverId ?? req.session?.id; // προτιμά driverId, fallback στο id
-    const driverId = Number(sidDriverId);
-  
-    if (!req.session || req.session.role !== 'driver' || !Number.isInteger(driverId) || driverId <= 0) {
+    const driverId = Number(req.user?.id);
+    if (!Number.isInteger(driverId) || driverId <= 0) {
       return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
     }
   

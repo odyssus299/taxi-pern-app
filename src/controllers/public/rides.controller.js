@@ -16,17 +16,18 @@ exports.createRideRequest = async (req, res, next) => {
   }
 
   // Αν είναι logged-in user, ΑΠΛΑ περνάμε userId — δεν αποθηκεύουμε requester_*.
-  const sessionUserId = (req.session?.role === 'user' && req.session?.userId)
-    ? Number(req.session.userId) : null;
+  const jwtUserId = (req.user?.role === 'user' && Number.isFinite(Number(req.user?.id)))
+    ? Number(req.user.id)
+    : null;
 
   let result;
   try {
     result = await RidesRepo.createWithCandidates({
-      userId: sessionUserId,
-      requesterFirstName: sessionUserId ? null : firstName,
-      requesterLastName : sessionUserId ? null : lastName,
-      requesterPhone    : sessionUserId ? null : phone,
-      requesterEmail    : sessionUserId ? null : email,
+      userId: jwtUserId,
+      requesterFirstName: jwtUserId ? null : firstName,
+      requesterLastName : jwtUserId ? null : lastName,
+      requesterPhone    : jwtUserId ? null : phone,
+      requesterEmail    : jwtUserId ? null : email,
       pickupAddress     : address,
       pickupLat         : lat,
       pickupLng         : lng,

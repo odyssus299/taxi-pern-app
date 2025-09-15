@@ -5,10 +5,10 @@ const RidesRepo = require('../../repos/rides.repo');
 
 // Βασικά στοιχεία για home (όνομα, rating, carNumber)
 exports.getOverview = async (req, res, next) => {
-  if (!req.session || req.session.role !== 'driver' || !req.session.driverId) {
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
+  const driverId = Number(req.user?.id);
+  if (!Number.isInteger(driverId) || driverId <= 0) {
+      return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
-  const driverId = parseInt(req.session.driverId, 10);
 
   let row;
   try {
@@ -32,9 +32,10 @@ exports.getOverview = async (req, res, next) => {
 
 // Τα 2 πιο πρόσφατα μηνύματα admin
 exports.listAdminMessages = async (req, res, next) => {
-    if (!req.session || req.session.role !== 'driver' || !req.session.driverId) {
+  const driverId = Number(req.user?.id);
+  if (!Number.isInteger(driverId) || driverId <= 0) {
       return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-    }
+  }
     try {
       const rows = await AdminMessagesRepo.listLatest(2); // raw: created_at
       const items = rows.map(r => ({
@@ -50,10 +51,10 @@ exports.listAdminMessages = async (req, res, next) => {
 
 // Επιτυχημένες διαδρομές ανά μήνα (τελευταίο 6μηνο)
 exports.getMonthlySuccess = async (req, res, next) => {
-  if (!req.session || req.session.role !== 'driver' || !req.session.driverId) {
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
+  const driverId = Number(req.user?.id);
+  if (!Number.isInteger(driverId) || driverId <= 0) {
+      return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
-  const driverId = parseInt(req.session.driverId, 10);
 
   let months;
   try {
