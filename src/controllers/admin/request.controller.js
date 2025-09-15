@@ -10,10 +10,8 @@ const isPlate = (s) => /^[Α-Ω]{3}-[0-9]{4}$/.test(String(s || ''));
 
 // Λίστα open requests
 exports.listRequests = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   let items;
   try {
@@ -49,10 +47,8 @@ exports.listRequests = async (req, res, next) => {
 
 // Προβολή ενός request
 exports.getRequestById = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id < 1) {
@@ -95,10 +91,8 @@ exports.getRequestById = async (req, res, next) => {
 
 // Έγκριση αιτήματος: εφαρμόζουμε αλλαγές στον driver & διαγράφουμε το request
 exports.approveRequest = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id < 1) {
@@ -174,10 +168,8 @@ exports.approveRequest = async (req, res, next) => {
 
 // Απόρριψη αιτήματος: απλή διαγραφή
 exports.rejectRequest = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id) || id < 1) {

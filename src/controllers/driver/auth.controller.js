@@ -2,6 +2,16 @@ const HttpError = require('../../utils/HttpError');
 const DriversRepo = require('../../repos/drivers.repo');
 const RidesRepo = require('../../repos/rides.repo');
 const { pool } = require('../../db/pool');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+function signToken(id) {
+  return jwt.sign(
+    { userId: id, userRole: 'driver' },
+    process.env.JWT_SECRET || process.env.JWT_KEY,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+  );
+}
 
 exports.login = async (req, res, next) => {
   const email = String(req.body?.email || '').trim();
@@ -14,26 +24,27 @@ exports.login = async (req, res, next) => {
     return next(e);
   }
 
-  if (!row || String(row.password) !== password) {
-    return next(new HttpError('Λάθος email ή κωδικός.', 401));
-  }
+  let ok = false;
+  try { ok = await bcrypt.compare(password, row.password || ''); }
+  catch (_e) { return next(new HttpError('Προέκυψε σφάλμα κατά τον έλεγχο του κωδικού.', 500)); }
+  if (!ok) return next(new HttpError('Λάθος email ή κωδικός.', 401));
 
   // >>> FIX: πρέπει να δημιουργήσουμε session με το custom helper σου
-  if (typeof req.createSession !== 'function') {
-    return next(new HttpError('Το session middleware δεν αρχικοποιήθηκε.', 500));
-  }
+  // if (typeof req.createSession !== 'function') {
+  //   return next(new HttpError('Το session middleware δεν αρχικοποιήθηκε.', 500));
+  // }
 
-  try {
-    req.createSession({
-      role: 'driver',
-      driverId: String(row.id),
-      email: row.email,
-      firstName: row.first_name,
-      lastName: row.last_name
-    });
-  } catch (_e) {
-    return next(new HttpError('Προέκυψε σφάλμα κατά τη δημιουργία συνεδρίας οδηγού.', 500));
-  }
+  // try {
+  //   req.createSession({
+  //     role: 'driver',
+  //     driverId: String(row.id),
+  //     email: row.email,
+  //     firstName: row.first_name,
+  //     lastName: row.last_name
+  //   });
+  // } catch (_e) {
+  //   return next(new HttpError('Προέκυψε σφάλμα κατά τη δημιουργία συνεδρίας οδηγού.', 500));
+  // }
 
   try {
     if (row.status !== 'on_ride') {
@@ -44,6 +55,8 @@ exports.login = async (req, res, next) => {
   } catch {
     return next(new HttpError('Προέκυψε σφάλμα κατά την ενημέρωση της κατάστασης οδηγού.', 500));
   }
+
+  const token = signToken(row.id);
 
   const safe = {
     id: String(row.id),
@@ -58,7 +71,7 @@ exports.login = async (req, res, next) => {
     role: row.role
   };
 
-  return res.json({ success: true, data: { driver: safe } });
+  return res.json({ success: true, data: { driver: safe, token } });
 };
 
 // === LOGOUT ΜΕ ΙΔΙΑ ΛΟΓΙΚΗ ΜΕ ΤΟ MOCK (id param, on_ride block, reject pending, set offline) ===

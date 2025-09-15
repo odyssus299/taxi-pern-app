@@ -11,6 +11,7 @@ const Message = require('../../controllers/admin/message.controller');
 const Problem = require('../../controllers/admin/problem.controller');
 const Rides = require('../../controllers/admin/rides.controller');
 const { loginRateLimiter } = require('../../middleware/rateLimit');
+const checkAuth = require('../../middleware/check-auth');
 
 const router = express.Router();
 
@@ -35,6 +36,8 @@ router.post(
 );
 
 router.post('/logout', AdminAuth.logout);
+
+router.use(checkAuth('admin'));
 
 router.get('/me', Profile.getMe);
 router.patch(

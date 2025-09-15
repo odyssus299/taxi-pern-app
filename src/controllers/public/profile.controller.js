@@ -1,5 +1,6 @@
 const HttpError = require('../../utils/HttpError');
 const UsersRepo = require('../../repos/users.repo');
+const bcrypt = require('bcryptjs');
 
 
 // function sanitizeUser(u) {
@@ -37,27 +38,58 @@ exports.updateMe = async (req, res, next) => {
     email:     email?.trim(),
     phone:     phone?.trim(),
     // password: μόνο αν δόθηκε μη-κενό string
-    password:  typeof password === 'string' && password.length > 0 ? password : undefined
+    password:  typeof password === 'string' && password.length > 0 ? String(password) : undefined
   };
 
   // 3) Υπολογισμός πραγματικών αλλαγών (μην στείλουμε ό,τι είναι ίδιο)
   const changed = {};
-  if (desired.firstName !== undefined && desired.firstName !== current.first_name) changed.firstName = desired.firstName;
-  if (desired.lastName  !== undefined && desired.lastName  !== current.last_name)  changed.lastName  = desired.lastName;
-  if (desired.email     !== undefined && desired.email     !== current.email)      changed.email     = desired.email;
-  if (desired.phone     !== undefined && desired.phone     !== current.phone)      changed.phone     = desired.phone;
-  if (desired.password  !== undefined)                                             changed.password  = desired.password;
+   if (desired.firstName !== undefined && desired.firstName !== current.first_name) changed.firstName = desired.firstName;
+   if (desired.lastName  !== undefined && desired.lastName  !== current.last_name)  changed.lastName  = desired.lastName;
+   if (desired.email     !== undefined && desired.email     !== current.email)      changed.email     = desired.email;
+   if (desired.phone     !== undefined && desired.phone     !== current.phone)      changed.phone     = desired.phone;
 
-  if (Object.keys(changed).length === 0) {
-    return res.status(400).json({ success: false, message: 'Δεν έχετε κάνει καμία αλλαγή στα στοιχεία σας.' });
-  }
+  // if (Object.keys(changed).length === 0) {
+  //   return res.status(400).json({ success: false, message: 'Δεν έχετε κάνει καμία αλλαγή στα στοιχεία σας.' });
+  // }
+
+  if (typeof desired.password === 'string') {
+     const incomingPwd = desired.password;
+     const currentPwd  = String(current.password || '');
+     const looksHashed = /^\$2[aby]\$\d{2}\$/.test(currentPwd);
+    
+     let shouldChangePassword = false;
+     if (looksHashed) {
+       try {
+         const same = await bcrypt.compare(incomingPwd, currentPwd);
+         shouldChangePassword = !same;
+       } catch (_e) {
+         return next(new HttpError('Προέκυψε σφάλμα κατά τον έλεγχο του κωδικού.', 500));
+       }
+     } else {
+       // Παλιά plaintext αποθήκευση: αν διαφέρει, θα το αλλάξουμε και θα γράψουμε hash
+       shouldChangePassword = incomingPwd !== currentPwd;
+     }
+    
+     if (shouldChangePassword) {
+       try {
+         const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '12', 10);
+         changed.password = await bcrypt.hash(incomingPwd, saltRounds);
+       } catch (_e) {
+         return next(new HttpError('Προέκυψε σφάλμα κατά την κρυπτογράφηση του κωδικού.', 500));
+       }
+     }
+   }
+    
+   if (Object.keys(changed).length === 0) {
+     return next(new HttpError('Δεν έχετε κάνει καμία αλλαγή στα στοιχεία σας.', 400));
+   }
 
   // 4) Μοναδικό email (καθαρό 409 πριν το UPDATE)
   if (changed.email) {
     try {
       const existing = await UsersRepo.findByEmail(changed.email);
       if (existing && Number(existing.id) !== Number(userId)) {
-        return res.status(409).json({ success: false, message: 'Αυτό το email χρήστη χρησιμοποιείται ήδη.' });
+        return next(new HttpError('Αυτό το email χρήστη χρησιμοποιείται ήδη.', 409));
       }
     } catch (e) {
       return next(e);

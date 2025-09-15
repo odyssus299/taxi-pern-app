@@ -1,6 +1,7 @@
 const HttpError = require('../../utils/HttpError');
 const AdminsRepo = require('../../repos/admins.repo');
 const catchAsync = require('../../utils/catchAsync');
+const bcrypt = require('bcryptjs');
 
 
 function toApi(adminRow) {
@@ -16,32 +17,28 @@ function toApi(adminRow) {
 }
 
 exports.getMe = catchAsync(async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
+  
   let admin;
   try {
-    admin = await AdminsRepo.getById(req.session.id);
+    admin = await AdminsRepo.getById(adminId);
   } catch (e) {
-    return next(e);
+    return next(new HttpError('Προέκυψε πρόβλημα με την αναζήτηση του admin', 404));
   }
   if (!admin) {
-    req.destroySession?.();
     return next(new HttpError('Ο admin δεν βρέθηκε.', 404));
   }
   return res.json({ success: true, data: { admin: toApi(admin) } });
 });
 
 exports.updateProfile = catchAsync(async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   let current;
   try {
-    current = await AdminsRepo.getById(req.session.id);
+    current = await AdminsRepo.getById(adminId);
   } catch (e) { return next(e); }
   if (!current) return next(new HttpError('Ο admin δεν βρέθηκε.', 404));
 
@@ -100,23 +97,27 @@ exports.updateProfile = catchAsync(async (req, res, next) => {
     lastName:  nextState.lastName,
     email:     nextState.email,
     phone:     nextState.phone,
-    password:  passwordChanged ? body.password : undefined
+    password:   passwordChanged
+      ? await bcrypt.hash(String(body.password), parseInt(process.env.BCRYPT_SALT_ROUNDS || '12', 10))
+      : undefined
   };
 
   let updated;
   try {
-    updated = await AdminsRepo.updateById(req.session.id, patch);
-  } catch (e) { return next(e); }
+    updated = await AdminsRepo.updateById(adminId, patch);
+  } catch (e) { return next(new HttpError('Η ενημέρωση του προφιλ σας απέτυχε', 500)) }
   if (!updated) return next(new HttpError('Ο admin δεν βρέθηκε.', 404));
 
   // --- NEW: auto-logout όταν αλλάξει email ή/και password ---
-  if (emailChanged || passwordChanged) {
-    try {
-      req.destroySession?.();
-      // Αν χρειάζεται καθάρισμα cookie ρητά, ξεσχόλιασε και βάλε το σωστό όνομα cookie:
-      // res.clearCookie('sid', { path: '/', httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
-    } catch (_) { /* σκόπιμα σιωπηλό */ }
-  }
+  // if (emailChanged || passwordChanged) {
+  //   try {
+  //     req.destroySession?.();
+  //     // Αν χρειάζεται καθάρισμα cookie ρητά, ξεσχόλιασε και βάλε το σωστό όνομα cookie:
+  //     // res.clearCookie('sid', { path: '/', httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+  //   } catch (_) { /* σκόπιμα σιωπηλό */ }
+  // }
+
+  const forceLogout = emailChanged || passwordChanged;
 
   const message = (emailChanged || passwordChanged)
     ? 'Τα στοιχεία εισόδου άλλαξαν. Θα χρειαστεί να συνδεθείτε ξανά.'
@@ -129,5 +130,5 @@ exports.updateProfile = catchAsync(async (req, res, next) => {
     email: a.email, phone: a.phone, created_at: a.created_at
   });
 
-  return res.json({ success: true, message, data: { admin: toApi(updated) } });
+  return res.json({ success: true, message, data: { admin: toApi(updated) }, forceLogout });
 });

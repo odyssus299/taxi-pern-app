@@ -85,10 +85,8 @@ function normalizeStatus(s) {
 
 exports.getDriverMonthlyRideStats = async (req, res, next) => {
   // auth
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {

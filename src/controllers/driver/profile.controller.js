@@ -3,10 +3,8 @@ const DriversRepo = require('../../repos/drivers.repo');
 const DriverRequestsRepo = require('../../repos/driverRequests.repo');
 
 exports.getProfile = async (req, res, next) => {
-  if (!req.session || req.session.role !== 'driver' || !req.session.driverId) {
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
-  const id = parseInt(req.session.driverId, 10);
+  const id = Number(req.user?.id);
+  if (!id) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   let row;
   try {
@@ -37,10 +35,10 @@ exports.getProfile = async (req, res, next) => {
 
 
 exports.updateProfile = async (req, res, next) => {
-  if (!req.session || req.session.role !== 'driver' || !req.session.driverId) {
+  const driverId = Number(req.user?.id);
+  if (!driverId) {
     return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
-  const driverId = parseInt(req.session.driverId, 10);
 
   // Τρέχων driver από DB
   let cur;

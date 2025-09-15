@@ -7,8 +7,8 @@ const AdminMessagesRepo = require('../../repos/adminMessages.repo');
 
 // POST /api/admin/messages  (κρατάει max 2 με transaction)
 exports.sendMessage = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
+  const adminId = Number(req.user?.id);
+  if (!adminId) {
     return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
 

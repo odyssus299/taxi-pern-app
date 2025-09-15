@@ -1,6 +1,7 @@
 const DriversRepo = require('../../repos/drivers.repo');
 const RidesRepo = require('../../repos/rides.repo');
 const HttpError = require('../../utils/HttpError');
+const bcrypt = require('bcryptjs');
 
 function toApi(row) {
   const {
@@ -26,8 +27,8 @@ function toApi(row) {
 
   
 exports.getDriverById = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
+  const adminId = Number(req.user?.id);
+  if (!adminId) {
     return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
 
@@ -50,8 +51,8 @@ exports.getDriverById = async (req, res, next) => {
 };
 
 exports.updateDriver = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
+  const adminId = Number(req.user?.id);
+  if (!adminId) {
     return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
 
@@ -85,8 +86,16 @@ exports.updateDriver = async (req, res, next) => {
   const carChanged   = t(carNumber)  !== null && t(carNumber)  !== (current.car_number || '');
 
   const incomingPwd = str(password);
-  const passwordChanged =
-    incomingPwd !== null && incomingPwd.length > 0 && incomingPwd !== current.password;
+  let passwordChanged = false;
+  if (incomingPwd !== null && incomingPwd.length > 0) {
+    if (current.password && /^\$2[aby]\$\d{2}\$/.test(String(current.password))) {
+      const same = await bcrypt.compare(incomingPwd, String(current.password));
+      passwordChanged = !same;
+    } else {
+      // Αν το παλιό ήταν plaintext ή κενό, οτιδήποτε νέο θεωρείται αλλαγή
+      passwordChanged = true;
+    }
+  }
 
   if (!nameChanged && !emailChanged && !phoneChanged && !carChanged && !passwordChanged) {
     return next(new HttpError('Δεν έχετε κάνει καμία αλλαγή στα στοιχεία.', 400));
@@ -128,7 +137,10 @@ exports.updateDriver = async (req, res, next) => {
   if (emailChanged)          patch.email     = t(email);
   if (phoneChanged)          patch.phone     = t(phone);
   if (carChanged)            patch.carNumber = t(carNumber);
-  if (passwordChanged)       patch.password  = incomingPwd; // (DEV ONLY — bcrypt αργότερα)
+  if (passwordChanged) {
+    const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || '12', 10);
+    patch.password = await bcrypt.hash(incomingPwd, saltRounds);
+  }
 
   let updated;
   try {
@@ -206,13 +218,16 @@ exports.createDriver = async (req, res, next) => {
   // 3) Δημιουργία
   let row;
   try {
+    const passwordHash = password
+    ? await bcrypt.hash(String(password), parseInt(process.env.BCRYPT_SALT_ROUNDS || '12', 10))
+    : null;
     row = await DriversRepo.create({
       firstName,
       lastName,
       email,
       phone,
       carNumber,
-      password,               // DEV ONLY — bcrypt αργότερα
+      password: passwordHash,               
       status: status || 'offline',
       lat,
       lng
@@ -228,9 +243,8 @@ exports.createDriver = async (req, res, next) => {
 };
 
 exports.deleteDriver = async (req, res, next) => {
-  console.log('hi')
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
+  const adminId = Number(req.user?.id);
+  if (!adminId) {
     return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
 
@@ -254,9 +268,8 @@ exports.deleteDriver = async (req, res, next) => {
 };
 
 exports.getMonthlyRideStats = async (req, res, next) => {
-  // admin session
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
+  const adminId = Number(req.user?.id);
+  if (!adminId) {
     return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
 

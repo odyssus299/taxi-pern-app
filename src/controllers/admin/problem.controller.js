@@ -2,8 +2,8 @@ const HttpError = require('../../utils/HttpError');
 const ProblemsRepo = require('../../repos/problems.repo');
 
 exports.listProblems = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
+  const adminId = Number(req.user?.id);
+  if (!adminId) {
     return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
 
@@ -28,8 +28,8 @@ exports.listProblems = async (req, res, next) => {
 };
 
 exports.getProblemById = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
+  const adminId = Number(req.user?.id);
+  if (!adminId) {
     return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
   }
 

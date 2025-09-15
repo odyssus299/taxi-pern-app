@@ -2,6 +2,7 @@ const express = require('express');
 const { body, param } = require('express-validator');
 const validate = require('../../middleware/validate');
 const DriverAuth = require('../../controllers/driver/auth.controller');
+const checkAuth = require('../../middleware/check-auth');
 const { loginRateLimiter } = require('../../middleware/rateLimit');
 const Dashboard = require('../../controllers/driver/dashboard.controller');
 const Driver = require('../../controllers/driver/driver.controller');
@@ -46,6 +47,8 @@ router.post(
   validate,
   DriverAuth.login
 );
+
+router.use(checkAuth('driver'));
 
 router.get('/:id/ride-request', Ride.getRideProposal);
 router.get('/:id/ride-active', Ride.getActiveRide);

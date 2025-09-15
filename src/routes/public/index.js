@@ -2,7 +2,8 @@ const express = require('express');
 const { body, param } = require('express-validator');
 const validate = require('../../middleware/validate');
 const { rideRequestRateLimiter, rideStatusRateLimiter, loginRateLimiter } = require('../../middleware/rateLimit');
-const requireUser = require('../../middleware/requireUser');
+// const requireUser = require('../../middleware/requireUser');
+const checkAuth = require('../../middleware/check-auth');
 const PublicRides = require('../../controllers/public/rides.controller');
 const PublicAuth = require('../../controllers/public/auth.controller');
 const PublicProfile = require('../../controllers/public/profile.controller');
@@ -56,7 +57,7 @@ router.post(
   PublicAuth.login
 );
 
-router.get('/me', PublicAuth.me);
+router.get('/me', checkAuth('user'), PublicAuth.me);
 router.post('/logout', PublicAuth.logout);
 
 /* ========== PROFILE (logged-in user) ========== */
@@ -80,7 +81,7 @@ router.patch(
       .matches(/[!@#$%^&*(),.?":{}|<>]/).withMessage('Χρειάζεται σύμβολο.')
   ],
   validate,
-  requireUser,
+  checkAuth('user'),
   PublicProfile.updateMe
 );
 

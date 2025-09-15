@@ -7,10 +7,8 @@ const PAGE_SIZE = 5; // σταθερό
 // Λίστα όλων των οδηγών με rating για τη σελίδα "Κριτικές οδηγών"
 exports.listDriversForReviews = async (_req, res, next) => {
   // (προαιρετικά) έλεγχος admin session, αν τον βάζεις παντού
-  if (_req.session?.role !== 'admin') {
-    _req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   let data;
   try {
@@ -23,10 +21,8 @@ exports.listDriversForReviews = async (_req, res, next) => {
 
 // Reviews συγκεκριμένου οδηγού με AJAX pagination (page, limit=5)
 exports.listDriverReviews = async (req, res, next) => {
-  if (req.session?.role !== 'admin') {
-    req.destroySession?.();
-    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
-  }
+  const adminId = Number(req.user?.id);
+  if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   // Συμβατότητα: δεχόμαστε είτε :driverId είτε :id στο route
   const paramId = req.params.driverId ?? req.params.id;
