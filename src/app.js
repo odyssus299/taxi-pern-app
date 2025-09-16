@@ -31,7 +31,7 @@ app.use('/api', api);
 app.use('/api/admin', adminRoutes);
 
 app.use('/api/driver', driverRoutes);
-console.log('hfhfsdsf')
+
 app.use('/api/public', publicRoutes);
 
 app.use(notFound);

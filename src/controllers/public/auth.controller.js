@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 
 
 function signToken(userId) {
+  console.log(process.env.JWT_EXPIRES_IN)
   return jwt.sign(
     { userId, userRole: 'user' },
     process.env.JWT_SECRET || process.env.JWT_KEY,
@@ -79,6 +80,7 @@ exports.register = async (req, res, next) => {
 };
 
 exports.login = async (req, res, next) => {
+
   const email = String(req.body?.email || '').trim();
   const password = String(req.body?.password || '');
 

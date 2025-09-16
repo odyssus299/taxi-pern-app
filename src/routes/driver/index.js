@@ -27,7 +27,7 @@ const router = express.Router();
 //     Driver.getMessages
 //   );
 
-  router.get('/stats/rides/monthly', Driver.getMyMonthlyRideBreakdown);
+ 
   
   // router.get(
   //   '/:id/rides/monthly',
@@ -48,7 +48,16 @@ router.post(
   DriverAuth.login
 );
 
+router.post(
+  '/:id/logout',
+  [param('id').exists({ checkFalsy: true }).withMessage('Το id είναι υποχρεωτικό.')],
+  validate,
+  DriverAuth.logout
+);
+
 router.use(checkAuth('driver'));
+
+router.get('/stats/rides/monthly', Driver.getMyMonthlyRideBreakdown);
 
 router.get('/:id/ride-request', Ride.getRideProposal);
 router.get('/:id/ride-active', Ride.getActiveRide);
@@ -99,13 +108,6 @@ router.patch(
 router.get('/overview', DriverHome.getOverview);
 router.get('/messages', DriverHome.listAdminMessages);
 router.get('/rides/monthly', DriverHome.getMonthlySuccess);
-
-router.post(
-  '/:id/logout',
-  [param('id').exists({ checkFalsy: true }).withMessage('Το id είναι υποχρεωτικό.')],
-  validate,
-  DriverAuth.logout
-);
 
 router.post(
   '/:id/ride/complete',

@@ -315,7 +315,23 @@ async function create(driver) {
       throw new HttpError('Προέκυψε σφάλμα κατά τον έλεγχο πινακίδας.', 500);
     }
   }
+
+  // ΝΕΟ: ενημέρωση θέσης οδηγού από WS pong
+async function updatePosition(driverId, lat, lng) {
+    const sql = `
+      UPDATE public.drivers
+      SET lat = $2, lng = $3
+      WHERE id = $1
+      RETURNING id, lat, lng
+    `;
+    try {
+      const { rows } = await pool.query(sql, [driverId, lat, lng]);
+      return rows[0] || null;
+    } catch (_e) {
+      throw new HttpError('Προέκυψε σφάλμα κατά την ενημέρωση θέσης οδηγού.', 500);
+    }
+  }
   
   
 
-module.exports = { findByEmail, setStatusById, findById, existsEmailForOtherId, create, updateById, listByFullName, deleteById, getAll, updateStatusById, findNearestAvailable, findByCarNumber };
+module.exports = { findByEmail, setStatusById, findById, existsEmailForOtherId, create, updateById, listByFullName, deleteById, getAll, updateStatusById, findNearestAvailable, findByCarNumber, updatePosition };

@@ -16,7 +16,7 @@ module.exports = function checkAuth(requiredRole) {
       const auth = req.headers?.authorization || '';
       const [scheme, token] = auth.split(' ');
       if ((scheme || '').toLowerCase() !== 'bearer' || !token) {
-        return next(new HttpError('Λείπει το Authorization header.', 401));
+        return next(new HttpError('Η συνεδρία σας έληξε ή δεν είστε συνδεδεμένος. Παρακαλώ αποσυνδεθείτε και συνδεθείτε ξανά.', 401));
       }
       const decoded = jwt.verify(token, getSecret());
       // Ενοποιούμε ονόματα για συμβατότητα με τον υπάρχοντα κώδικα
@@ -24,7 +24,7 @@ module.exports = function checkAuth(requiredRole) {
       req.userData = { userId: decoded.userId, userRole: decoded.userRole || decoded.role };
 
       if (requiredRole && req.user.role !== requiredRole) {
-        return next(new HttpError('Απαγορευμένο.', 403));
+        return next(new HttpError('Δεν έχετε δικαίωμα πρόσβασης σε αυτή τη λειτουργία..', 403));
       }
       return next();
     } catch (_e) {

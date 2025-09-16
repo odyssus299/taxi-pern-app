@@ -1,10 +1,14 @@
 require('dotenv').config();
 const app = require('./app');
 const { checkDb, pool } = require('./db/pool');
+const http = require('http');
+const { initWs } = require('./ws'); // ΝΕΟ: θα δημιουργήσουμε το ./ws/index.js
 
 // 👉 πρόσθεσε αυτό:
 const { initCleanupRides } = require('../src/jobs/cleanupRides');
 const { initCleanupProblems } = require('../src/jobs/cleanupProblems');
+const { initCleanupReviews } = require('./jobs/cleanupReviews');
+const { initCleanupRequests } = require('./jobs/cleanupRequests');
 
 const PORT = parseInt(process.env.APP_PORT || '4000', 10);
 
@@ -19,6 +23,8 @@ const { sweepExpiredAwaiting } = require('../src/repos/rides.repo');
     // if (process.env.NODE_ENV !== 'test') {
       initCleanupRides();
       initCleanupProblems();
+      initCleanupReviews();  // reviews >6m
+      initCleanupRequests();
     // }
 
     // 👉 Ξεκίνα το sweep ΜΕΤΑ την επιτυχή σύνδεση DB
@@ -37,7 +43,11 @@ const { sweepExpiredAwaiting } = require('../src/repos/rides.repo');
     process.on('SIGTERM', () => clearInterval(sweepTimer));
     process.on('SIGINT',  () => clearInterval(sweepTimer));
 
-    app.listen(PORT, () => {
+    // ΝΕΟ: φτιάχνουμε http server, δένουμε Socket.IO
+    const server = http.createServer(app);
+    initWs(server); // εκκίνηση WS layer (JWT handshake, rooms, handlers)
+    server.listen(PORT, () => {
+    //app.listen(PORT, () => {
       const opts = pool.options || {};
       const dbInfo = opts.connectionString ? 'DATABASE_URL' : `${opts.host}:${opts.port}/${opts.database}`;
       console.log(`API listening on http://localhost:${PORT}`);

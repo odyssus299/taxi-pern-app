@@ -3,12 +3,21 @@ const DriversRepo = require('../../repos/drivers.repo');
 const DriverRequestsRepo = require('../../repos/driverRequests.repo');
 
 exports.getProfile = async (req, res, next) => {
-  const id = Number(req.user?.id);
-  if (!id) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
+  const jwtId = Number(req.user?.id);
+  const role  = String(req.user?.role || '').toLowerCase();
+  if (!Number.isFinite(jwtId) || jwtId <= 0 || role !== 'driver') {
+    return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
+  }
+
+  // 2) Αν υπάρχει :id στο route, πρέπει να ταιριάζει με το JWT id
+  const paramId = req.params?.id != null ? Number(req.params.id) : null;
+  if (paramId != null && Number.isFinite(paramId) && paramId !== jwtId) {
+    return next(new HttpError('Δεν έχετε δικαίωμα πρόσβασης σε αυτό το προφίλ.', 403));
+  }
 
   let row;
   try {
-    row = await DriversRepo.findById(id);
+    row = await DriversRepo.findById(jwtId);
   } catch (e) {
     return next(e);
   }

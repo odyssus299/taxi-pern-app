@@ -7,7 +7,7 @@ const PAGE_SIZE = 5; // σταθερό
 // Λίστα όλων των οδηγών με rating για τη σελίδα "Κριτικές οδηγών"
 exports.listDriversForReviews = async (_req, res, next) => {
   // (προαιρετικά) έλεγχος admin session, αν τον βάζεις παντού
-  const adminId = Number(req.user?.id);
+  const adminId = Number(_req.user?.id);
   if (!adminId) return next(new HttpError('Δεν είστε συνδεδεμένος.', 401));
 
   let data;
