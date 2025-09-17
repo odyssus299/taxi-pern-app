@@ -3,6 +3,7 @@ const DriversRepo = require('../../repos/drivers.repo');
 const RidesRepo = require('../../repos/rides.repo');
 const ProblemsRepo = require('../../repos/problems.repo');
 const ReviewEmail = require('../../services/reviewEmail.service');
+const { getHub } = require('../../ws'); // <— WS hub
 
 // === Πάρε πρόταση ride για συγκεκριμένο οδηγό (polling) ===
 // GET /api/driver/:id/ride-request
@@ -107,6 +108,37 @@ exports.respondToRideRequest = async (req, res, next) => {
   } catch {
     return next(new HttpError('Προέκυψε σφάλμα κατά την ενημέρωση διαδρομής.', 500));
   }
+
+   // WS PUSH στον νέο awaiting driver (αν υπάρχει)
+  try {
+    const ws = (typeof getHub === 'function') ? getHub() : null;
+    if (ws && typeof ws.notifyDriverProposal === 'function') {
+      // Βρες ποιος είναι τώρα awaiting για το συγκεκριμένο ride
+      let awaiting = null;
+      if (typeof RidesRepo.getAwaitingCandidate === 'function') {
+        awaiting = await RidesRepo.getAwaitingCandidate(rideId);
+      } else if (typeof RidesRepo.listCandidates === 'function') {
+        const list = await RidesRepo.listCandidates(rideId);
+        awaiting = (list || []).find(c => String(c.status || c.candidate_status) === 'awaiting_response');
+      }
+      if (awaiting) {
+        const nextDriverId = Number(awaiting.driverId || awaiting.driver_id || awaiting.id);
+        if (Number.isFinite(nextDriverId)) {
+          // θες pickup coords -> φέρε το ride για καθαρά payload
+          let rideRow = null;
+          if (typeof RidesRepo.findById === 'function') {
+            try { rideRow = await RidesRepo.findById(rideId); } catch {}
+          }
+          ws.notifyDriverProposal(nextDriverId, {
+            rideId: String(rideId),
+            pickupLat: Number(rideRow?.pickup_lat ?? rideRow?.pickupLat ?? 0),
+            pickupLng: Number(rideRow?.pickup_lng ?? rideRow?.pickupLng ?? 0),
+            respondByMs: Date.now() + 20_000
+          });
+        }
+      }
+    }
+  } catch (_) { /* σιωπηλά */ }
 
   return res.json({
     success: true,

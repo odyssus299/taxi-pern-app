@@ -8,6 +8,7 @@ const PublicRides = require('../../controllers/public/rides.controller');
 const PublicAuth = require('../../controllers/public/auth.controller');
 const PublicProfile = require('../../controllers/public/profile.controller');
 const PublicReviews = require('../../controllers/public/reviews.controller');
+const PublicContact = require('../../controllers/public/contact.controller');
 
 const router = express.Router();
 
@@ -59,6 +60,28 @@ router.post(
 
 router.get('/me', checkAuth('user'), PublicAuth.me);
 router.post('/logout', PublicAuth.logout);
+
+router.post(
+  '/contact',
+  rideRequestRateLimiter, // προαιρετικό αλλά χρήσιμο
+  [
+    body('fullName')
+      .exists({ checkFalsy: true }).withMessage('Το ονοματεπώνυμο είναι υποχρεωτικό.')
+      .bail().isString().withMessage('Μη έγκυρη τιμή.').bail().trim(),
+    body('email')
+      .exists({ checkFalsy: true }).withMessage('Το email είναι υποχρεωτικό.')
+      .bail().isEmail().withMessage('Το email δεν είναι έγκυρο.').bail().trim(),
+    body('subject')
+      .exists({ checkFalsy: true }).withMessage('Το θέμα είναι υποχρεωτικό.')
+      .bail().isString().withMessage('Μη έγκυρη τιμή.').bail().trim(),
+    body('message')
+      .optional({ nullable: true }).isString().withMessage('Μη έγκυρη τιμή.'),
+    // honeypot: μην ρίχνεις 422 — απλά επιτρέπεται / θα το φιλτράρει ο controller
+    body('fax').optional({ nullable: true }).isString().withMessage('Μη έγκυρη τιμή.')
+  ],
+  validate,
+  PublicContact.submit
+);
 
 /* ========== PROFILE (logged-in user) ========== */
 router.patch(

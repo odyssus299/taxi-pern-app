@@ -2,6 +2,7 @@ const { pool } = require('../db/pool');
 const HttpError = require('../utils/HttpError');
 const DriversRepo = require('./drivers.repo');
 const crypto = require('crypto');
+const { getHub } = require('../ws');
 
 /**
  * Επιστρέφει στατιστικά ανά μήνα (τελευταίοι N μήνες) για έναν οδηγό.
@@ -681,8 +682,7 @@ async function findByReviewToken(token) {
 }
 
 async function sweepExpiredAwaiting(limit = 200) {
-  // Φέρνουμε λίστα ληγμένων "awaiting_response" με σειρά παλαιότητας.
-  // (προαιρετικά, φιλτράρουμε μόνο για rides που είναι ακόμη pending)
+  // Φέρνουμε λίστα ληγμένων "awaiting_response" με σειρά παλαιότητας
   const { rows } = await pool.query(
     `
     SELECT rc.id, rc.ride_id, rc.driver_id
@@ -702,10 +702,13 @@ async function sweepExpiredAwaiting(limit = 200) {
 
   for (const rc of rows) {
     const client = await pool.connect();
+    // θα κρατήσουμε εδώ info για WS push μετά το COMMIT
+    let toNotify = null;
+
     try {
       await client.query('BEGIN');
 
-      // Ξανα-κλείδωσε τον συγκεκριμένο candidate, για να μην συγκρουστείς με άλλο worker.
+      // Ξανα-κλείδωμα του συγκεκριμένου candidate
       const { rows: lockRows } = await client.query(
         `
         SELECT id, ride_id, driver_id
@@ -729,7 +732,7 @@ async function sweepExpiredAwaiting(limit = 200) {
         [rc.id]
       );
 
-      // 1bis) ΝΕΟ: καθάρισε από το ΤΡΕΧΟΝ ride όσους είναι accepted σε ΑΛΛΟ ride (ongoing)
+      // 1bis) Καθάρισε από το ΤΡΕΧΟΝ ride όσους είναι accepted σε ΑΛΛΟ ride (ongoing)
       await client.query(
         `
         DELETE FROM public.ride_candidates rc
@@ -744,9 +747,7 @@ async function sweepExpiredAwaiting(limit = 200) {
         [rc.ride_id]
       );
 
-      // 2) Βρίσκουμε τον επόμενο QUEUED, προσπερνώντας όσους:
-      //    - έχουν ενεργό awaiting_response αλλού (και το άλλο ride είναι pending)
-      //    - ή είναι accepted/ongoing αλλού
+      // 2) Βρες τον επόμενο QUEUED (skip όσους είναι απασχολημένοι αλλού)
       const { rows: nextRows } = await client.query(
         `
         SELECT rc2.driver_id
@@ -801,13 +802,37 @@ async function sweepExpiredAwaiting(limit = 200) {
           [rc.ride_id, String(getTtlSec()), nextDriverId]
         );
 
-        // ενημέρωσε και το rides ποιος είναι ο "ενεργός" οδηγός
+        // ενημέρωσε και το rides ποιος είναι ο ενεργός οδηγός
         await client.query(
           `UPDATE public.rides
            SET driver_id=$2
            WHERE id=$1`,
           [rc.ride_id, nextDriverId]
         );
+
+        // 4) Πάρε τα σωστά pickup coords και το πραγματικό expires_at
+        const { rows: infoRows } = await client.query(
+          `
+          SELECT r.pickup_lat, r.pickup_lng, rc.expires_at
+          FROM public.rides r
+          JOIN public.ride_candidates rc
+            ON rc.ride_id = r.id AND rc.driver_id = $2
+          WHERE r.id = $1
+          LIMIT 1
+          `,
+          [rc.ride_id, nextDriverId]
+        );
+
+        if (infoRows.length) {
+          const info = infoRows[0];
+          toNotify = {
+            driverId: Number(nextDriverId),
+            rideId: String(rc.ride_id),
+            pickupLat: Number(info.pickup_lat),
+            pickupLng: Number(info.pickup_lng),
+            respondByMs: info.expires_at ? new Date(info.expires_at).getTime() : null,
+          };
+        }
       }
 
       await client.query('COMMIT');
@@ -816,6 +841,23 @@ async function sweepExpiredAwaiting(limit = 200) {
       try { await client.query('ROLLBACK'); } catch {}
     } finally {
       client.release();
+    }
+
+    // --- WS push έξω από το transaction, soft-fail ---
+    if (toNotify && Number.isFinite(toNotify.driverId)) {
+      try {
+        const ws = (typeof getHub === 'function') ? getHub() : null;
+        if (ws && typeof ws.notifyDriverProposal === 'function') {
+          ws.notifyDriverProposal(toNotify.driverId, {
+            rideId: toNotify.rideId,
+            pickupLat: toNotify.pickupLat,
+            pickupLng: toNotify.pickupLng,
+            respondByMs: toNotify.respondByMs,
+          });
+        }
+      } catch (_) {
+        // σιωπηλά
+      }
     }
   }
 

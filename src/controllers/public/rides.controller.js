@@ -1,5 +1,7 @@
 const HttpError = require('../../utils/HttpError');
 const RidesRepo = require('../../repos/rides.repo');
+const { pool } = require('../../db/pool');
+const { getHub, hub } = require('../../ws');
 
 exports.createRideRequest = async (req, res, next) => {
   const firstName = String(req.body?.firstName || '').trim();
@@ -15,11 +17,26 @@ exports.createRideRequest = async (req, res, next) => {
     return next(new HttpError('Μη έγκυρες συντεταγμένες παραλαβής.', 422));
   }
 
-  // Αν είναι logged-in user, ΑΠΛΑ περνάμε userId — δεν αποθηκεύουμε requester_*.
-  const jwtUserId = (req.user?.role === 'user' && Number.isFinite(Number(req.user?.id)))
-    ? Number(req.user.id)
-    : null;
+  // Αν είναι logged-in user, απλά περνάμε userId — δεν αποθηκεύουμε requester_*
+  const jwtUserId =
+    (req.user?.role === 'user' && Number.isFinite(Number(req.user?.id)))
+      ? Number(req.user.id)
+      : null;
 
+  // On-demand WS ping: φρεσκάρισμα θέσης πριν το nearest
+  try {
+    const pingId = `ride-${Date.now()}`;
+    const ws = getHub();
+    if (ws && typeof ws.pingAllDrivers === 'function') {
+      ws.pingAllDrivers({ pingId, pickupLat: lat, pickupLng: lng, requestedAt: Date.now() });
+      // μικρό “παράθυρο” να γραφτούν τα νέα lat/lng
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  } catch (_e) {
+    // σιωπηλά: αν για κάποιο λόγο δεν υπάρχει WS, συνεχίζουμε με τα υπάρχοντα coords
+  }
+
+  // Δημιουργία ride + υπολογισμός κοντινότερων οδηγών
   let result;
   try {
     result = await RidesRepo.createWithCandidates({
@@ -34,9 +51,7 @@ exports.createRideRequest = async (req, res, next) => {
       nearestLimit      : 10
     });
   } catch (e) {
-    console.log(e)
     if (e instanceof HttpError) return next(e);
-    
     return next(new HttpError('Προέκυψε σφάλμα κατά τη δημιουργία αιτήματος διαδρομής.', 500));
   }
 
@@ -45,6 +60,34 @@ exports.createRideRequest = async (req, res, next) => {
       success: false,
       message: 'Δεν βρέθηκε διαθέσιμος οδηγός κοντά σας.'
     });
+  }
+
+  // WS PUSH: Στείλε proposal στον τρέχοντα awaiting driver (αν υπάρχει) με ΣΩΣΤΟ pickup & σωστό respondBy
+  try {
+    const ws = getHub();
+    if (ws && typeof ws.notifyDriverProposal === 'function') {
+      const { rows } = await pool.query(
+        `
+        SELECT driver_id, expires_at
+        FROM public.ride_candidates
+        WHERE ride_id = $1 AND status = 'awaiting_response'
+        ORDER BY assigned_at DESC NULLS LAST, position ASC
+        LIMIT 1
+        `,
+        [result.rideId]
+      );
+      const awaiting = rows[0];
+      if (awaiting && Number.isFinite(Number(awaiting.driver_id))) {
+        ws.notifyDriverProposal(Number(awaiting.driver_id), {
+          rideId: String(result.rideId),
+          pickupLat: lat,
+          pickupLng: lng,
+          respondByMs: awaiting.expires_at ? new Date(awaiting.expires_at).getTime() : null
+        });
+      }
+    }
+  } catch (_e) {
+    // σιωπηλά: δεν επηρεάζουμε το HTTP 201
   }
 
   return res.status(201).json({
@@ -56,6 +99,8 @@ exports.createRideRequest = async (req, res, next) => {
     }
   });
 };
+
+
 
 // GET /api/public/rides/:id/status
 exports.getRideStatus = async (req, res, next) => {

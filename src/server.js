@@ -2,9 +2,9 @@ require('dotenv').config();
 const app = require('./app');
 const { checkDb, pool } = require('./db/pool');
 const http = require('http');
-const { initWs } = require('./ws'); // ΝΕΟ: θα δημιουργήσουμε το ./ws/index.js
+const { initWs, getHub } = require('./ws'); // WS init & hub accessor
 
-// 👉 πρόσθεσε αυτό:
+// Cron jobs (όπως τα έχεις)
 const { initCleanupRides } = require('../src/jobs/cleanupRides');
 const { initCleanupProblems } = require('../src/jobs/cleanupProblems');
 const { initCleanupReviews } = require('./jobs/cleanupReviews');
@@ -12,42 +12,103 @@ const { initCleanupRequests } = require('./jobs/cleanupRequests');
 
 const PORT = parseInt(process.env.APP_PORT || '4000', 10);
 
+// Sweep & repos για WS push στους επόμενους
 const { sweepExpiredAwaiting } = require('../src/repos/rides.repo');
+const RidesRepo = require('./repos/rides.repo');
 
 (async () => {
+  let server;
+  let io;
+  let sweepTimer;
+  let shuttingDown = false;
+
+  // Κοινός helper για καθαρό τερματισμό
+  const shutdown = async (signal = 'SIGTERM') => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] received ${signal}, closing gracefully...`);
+
+    try { clearInterval(sweepTimer); } catch {}
+    try { io?.close?.(); } catch (e) { /* ignore */ }
+
+    // Κλείσε HTTP server -> μετά PG pool
+    try {
+      await new Promise((resolve) => {
+        server?.close?.(() => resolve());
+        // Αν δεν υπάρχει server, resolve άμεσα
+        if (!server || !server.close) resolve();
+      });
+    } catch (e) { /* ignore */ }
+
+    try { await pool?.end?.(); } catch { /* ignore */ }
+
+    // Σε περίπτωση που κάτι κρέμεται, φόρτωσε hard-exit μετά από 5s
+    setTimeout(() => process.exit(0), 5000).unref();
+    process.exit(0);
+  };
+
+  // Uncaught handlers -> προσπάθησε graceful shutdown
+  process.on('uncaughtException', (err) => {
+    console.error('[uncaughtException]', err);
+    shutdown('uncaughtException');
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason);
+    shutdown('unhandledRejection');
+  });
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+
   try {
     await checkDb();
 
-    // Ξεκίνα το cron ΜΟΝΟ εδώ (όχι σε app.js)
-    // Προαιρετικά: μόνο production
-    // if (process.env.NODE_ENV !== 'test') {
-      initCleanupRides();
-      initCleanupProblems();
-      initCleanupReviews();  // reviews >6m
-      initCleanupRequests();
-    // }
+    // Εκκίνηση cron jobs
+    initCleanupRides();
+    initCleanupProblems();
+    initCleanupReviews();
+    initCleanupRequests();
 
-    // 👉 Ξεκίνα το sweep ΜΕΤΑ την επιτυχή σύνδεση DB
+    // Notifier που καλείται όταν ο sweep προάγει νέο awaiting οδηγό
+    const onNewAwaiting = async (rideId, driverId, respondByMs) => {
+      const ws = (typeof getHub === 'function') ? getHub() : null;
+      if (!ws || typeof ws.notifyDriverProposal !== 'function') return;
+
+      // Φέρε pickup coords (προαιρετικό για καθαρό payload)
+      let rideRow = null;
+      try {
+        if (typeof RidesRepo.findById === 'function') {
+          rideRow = await RidesRepo.findById(rideId);
+        }
+      } catch { /* ignore */ }
+
+      const pickupLat = Number(rideRow?.pickup_lat ?? rideRow?.pickupLat ?? 0);
+      const pickupLng = Number(rideRow?.pickup_lng ?? rideRow?.pickupLng ?? 0);
+      console.log('[sweep->ws] notify', { rideId, driverId });
+
+      ws.notifyDriverProposal(Number(driverId), {
+        rideId: String(rideId),
+        pickupLat,
+        pickupLng,
+        respondByMs
+      });
+    };
+
+    // Sweep ληγμένων awaiting κάθε 1s
     const SWEEP_EVERY_MS = 1000;
     const SWEEP_BATCH = 200;
-    const sweepTimer = setInterval(async () => {
+    sweepTimer = setInterval(async () => {
       try {
-        const n = await sweepExpiredAwaiting(SWEEP_BATCH);
-        // if (n > 0) console.log('[ride-sweep] advanced', n);
-      } catch (e) {
+        await sweepExpiredAwaiting(SWEEP_BATCH, onNewAwaiting);
+      } catch {
         // κράτα τον server ζωντανό
-        // console.error('[ride-sweep] error', e);
       }
     }, SWEEP_EVERY_MS);
 
-    process.on('SIGTERM', () => clearInterval(sweepTimer));
-    process.on('SIGINT',  () => clearInterval(sweepTimer));
+    // Δημιουργία HTTP server & δέσιμο Socket.IO
+    server = http.createServer(app);
+    io = initWs(server);
 
-    // ΝΕΟ: φτιάχνουμε http server, δένουμε Socket.IO
-    const server = http.createServer(app);
-    initWs(server); // εκκίνηση WS layer (JWT handshake, rooms, handlers)
     server.listen(PORT, () => {
-    //app.listen(PORT, () => {
       const opts = pool.options || {};
       const dbInfo = opts.connectionString ? 'DATABASE_URL' : `${opts.host}:${opts.port}/${opts.database}`;
       console.log(`API listening on http://localhost:${PORT}`);
