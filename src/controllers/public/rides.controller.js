@@ -36,6 +36,8 @@ exports.createRideRequest = async (req, res, next) => {
     // σιωπηλά: αν για κάποιο λόγο δεν υπάρχει WS, συνεχίζουμε με τα υπάρχοντα coords
   }
 
+  const requesterEmail = jwtUserId ? null : (email || null);
+
   // Δημιουργία ride + υπολογισμός κοντινότερων οδηγών
   let result;
   try {
@@ -44,13 +46,15 @@ exports.createRideRequest = async (req, res, next) => {
       requesterFirstName: jwtUserId ? null : firstName,
       requesterLastName : jwtUserId ? null : lastName,
       requesterPhone    : jwtUserId ? null : phone,
-      requesterEmail    : jwtUserId ? null : email,
+      requesterEmail    : requesterEmail,
       pickupAddress     : address,
       pickupLat         : lat,
       pickupLng         : lng,
       nearestLimit      : 10
     });
   } catch (e) {
+    console.log('heys')
+    console.log(e)
     if (e instanceof HttpError) return next(e);
     return next(new HttpError('Προέκυψε σφάλμα κατά τη δημιουργία αιτήματος διαδρομής.', 500));
   }

@@ -418,3 +418,21 @@ CREATE INDEX IF NOT EXISTS ride_candidates_driver_accepted_idx
 CREATE INDEX IF NOT EXISTS drivers_available_lat_lng_idx
   ON public.drivers (lat, lng)
   WHERE status = 'available';
+
+  -- 1) Κάν’ τη στήλη προαιρετική (αν είναι NOT NULL)
+ALTER TABLE public.rides
+  ALTER COLUMN requester_email DROP NOT NULL;
+
+-- 2) Ρίξε το παλιό CHECK
+ALTER TABLE public.rides
+  DROP CONSTRAINT IF EXISTS rides_req_email_ck;
+
+-- 3) Ξαναφτιάξε πιο χαλαρό CHECK:
+--    επιτρέπουμε NULL ή κενό· αν υπάρχει τιμή, να μοιάζει με email
+ALTER TABLE public.rides
+  ADD CONSTRAINT rides_req_email_ck
+  CHECK (
+    requester_email IS NULL
+    OR length(trim(requester_email)) = 0
+    OR requester_email ~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$'
+  );

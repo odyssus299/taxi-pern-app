@@ -233,14 +233,23 @@ exports.completeRide = async (req, res, next) => {
 
   // 2) Αποστολή email για review (best-effort)
   try {
+    console.log(ride.requester_email)
+    console.log(ride)
+    // φέρε φρέσκο row για να σιγουρευτούμε ότι έχουμε requester_email
+    const freshRide = ride.requester_email != null ? ride : await RidesRepo.findByIdOwnedByDriver(rideId, driverId);
+    console.log(freshRide)
+    if (!freshRide?.requester_email) {
+      console.log('no email')
+      // Δεν υπάρχει email => δεν στέλνουμε τίποτα, δεν μαρκάρουμε review
+      return res.json({ success: true, message: 'Η διαδρομή ολοκληρώθηκε.' });
+    }
+
     const resEmail = await ReviewEmail.sendForRide(rideId);
-    console.log('[review-email]', { rideId, ...resEmail });
 
     // Βάζουμε "έναρξη" και "λήξη" ισχύος token (expires σε ttlDays)
     try {
       await RidesRepo.markReviewSent(rideId, { ttlDays });
     } catch (_e) {
-      console.error('markReviewSent failed for ride', rideId, _e);
     }
   } catch (e) {
     console.error('[review-email][error]', e);

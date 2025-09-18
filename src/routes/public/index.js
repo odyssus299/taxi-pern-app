@@ -131,9 +131,8 @@ router.post(
       .trim(),
 
     body('email')
-      .exists({ checkFalsy: true }).withMessage('Το πεδίο είναι υποχρεωτικό.')
-      .bail().isEmail().withMessage('Το email δεν είναι έγκυρο.')
-      .trim(),
+      .optional({ nullable: true, checkFalsy: true })
+      .isEmail().withMessage('Το email δεν είναι έγκυρο.'),
 
     body('phone')
       .exists({ checkFalsy: true }).withMessage('Το πεδίο είναι υποχρεωτικό.')

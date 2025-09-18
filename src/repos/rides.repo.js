@@ -188,7 +188,7 @@ async function monthlyStatsByDriver(driverId) {
     const sql = `
       SELECT id, driver_id, status,
              pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
-             created_at, completed_at
+             created_at, completed_at, requester_email
       FROM public.rides
       WHERE id = $1 AND driver_id = $2
       LIMIT 1
@@ -370,6 +370,7 @@ async function monthlyStatsByDriver(driverId) {
           await client.query('COMMIT');
           return { rideId, firstCandidateKm, candidatesCount };
         } catch (e) {
+          console.log(e)
           await client.query('ROLLBACK');
           if (e && e.code === '23505' && String(e.constraint || '').includes('review_token')) {
             // retry με νέο token

@@ -28,6 +28,7 @@ exports.submit = async (req, res, next) => {
       message: 'Ευχαριστούμε! Το μήνυμά σας έχει σταλεί.'
     });
   } catch (e) {
+    console.log(e)
     return next(new HttpError('Αποτυχία αποστολής μηνύματος. Προσπαθήστε ξανά.', 500));
   }
 };
