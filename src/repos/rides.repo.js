@@ -17,8 +17,8 @@ function makeReviewToken() {
 }
 
 function getTtlSec() {
-  const n = Number(process.env.RIDE_AWAIT_TTL_SEC || 11);
-  return Number.isFinite(n) && n > 0 ? n : 12;
+  const n = Number(process.env.RIDE_AWAIT_TTL_SEC || 6);
+  return Number.isFinite(n) && n > 0 ? n : 7;
 }
 
 async function rejectPendingByDriverId(driverId, client = null) {
@@ -274,7 +274,7 @@ async function monthlyStatsByDriver(driverId) {
     pickupAddress,
     pickupLat,
     pickupLng,
-    nearestLimit = 15
+    nearestLimit = 10
   }) {
     const lat = Number(pickupLat);
     const lng = Number(pickupLng);
@@ -282,7 +282,7 @@ async function monthlyStatsByDriver(driverId) {
       throw new HttpError('Μη έγκυρες συντεταγμένες.', 400);
     }
   
-    // 15 κοντινότεροι
+    // 10 κοντινότεροι
     const candidates = await DriversRepo.findNearestAvailable(lat, lng, nearestLimit);
     if (!candidates || candidates.length === 0) {
       throw new HttpError('Δεν βρέθηκε διαθέσιμος οδηγός κοντά σας.', 404);

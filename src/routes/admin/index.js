@@ -172,7 +172,6 @@ router.post(
 
 router.delete(
   '/drivers/:id',
-  requireAdmin,
   [
     param('id')
       .exists({ checkFalsy: true }).withMessage('Το id είναι υποχρεωτικό.')
