@@ -17,8 +17,8 @@ function makeReviewToken() {
 }
 
 function getTtlSec() {
-  const n = Number(process.env.RIDE_AWAIT_TTL_SEC || 6);
-  return Number.isFinite(n) && n > 0 ? n : 7;
+  const n = Number(process.env.RIDE_AWAIT_TTL_SEC || 13);
+  return Number.isFinite(n) && n > 0 ? n : 13;
 }
 
 async function rejectPendingByDriverId(driverId, client = null) {
@@ -577,8 +577,30 @@ async function respond(driverId, response) {
       [current.ride_id, next.driver_id]
     );
 
+    // 8) Φέρε pickup & expires_at για WS payload
+   const { rows: infoRows } = await client.query(
+     `
+     SELECT r.pickup_lat, r.pickup_lng, rc.expires_at
+     FROM public.rides r
+     JOIN public.ride_candidates rc
+       ON rc.ride_id = r.id AND rc.driver_id = $2
+     WHERE r.id = $1
+     LIMIT 1
+     `,
+     [current.ride_id, next.driver_id]
+   );
+   
+   const info = infoRows[0] || null;
+
     await client.query('COMMIT');
-    return { forwarded: true, rideId: current.ride_id, toDriverId: next.driver_id };
+    return {
+      forwarded: true,
+      rideId: current.ride_id,
+      toDriverId: next.driver_id,
+      pickupLat: info ? Number(info.pickup_lat) : null,
+      pickupLng: info ? Number(info.pickup_lng) : null,
+      respondByMs: info?.expires_at ? new Date(info.expires_at).getTime() : null,
+    };
   } catch (e) {
     await client.query('ROLLBACK');
     if (e instanceof HttpError) throw e;
@@ -705,6 +727,7 @@ async function sweepExpiredAwaiting(limit = 200) {
     const client = await pool.connect();
     // θα κρατήσουμε εδώ info για WS push μετά το COMMIT
     let toNotify = null;
+    let expiredDriverId = Number(rc.driver_id);
 
     try {
       await client.query('BEGIN');
@@ -845,10 +868,15 @@ async function sweepExpiredAwaiting(limit = 200) {
     }
 
     // --- WS push έξω από το transaction, soft-fail ---
-    if (toNotify && Number.isFinite(toNotify.driverId)) {
-      try {
-        const ws = (typeof getHub === 'function') ? getHub() : null;
-        if (ws && typeof ws.notifyDriverProposal === 'function') {
+    try {
+      const ws = (typeof getHub === 'function') ? getHub() : null;
+      if (ws) {
+        // NEW: ενημέρωσε τον προηγούμενο ότι έληξε (κλείνει άμεσα το modal)
+        if (Number.isFinite(expiredDriverId) && ws.notifyDriverProposalExpired) {
+          ws.notifyDriverProposalExpired(expiredDriverId, { rideId: String(rc.ride_id) });
+        }
+        // υπενθύμιση στον επόμενο
+        if (toNotify && ws.notifyDriverProposal) {
           ws.notifyDriverProposal(toNotify.driverId, {
             rideId: toNotify.rideId,
             pickupLat: toNotify.pickupLat,
@@ -856,10 +884,8 @@ async function sweepExpiredAwaiting(limit = 200) {
             respondByMs: toNotify.respondByMs,
           });
         }
-      } catch (_) {
-        // σιωπηλά
       }
-    }
+    } catch (_) { /* σιωπηλά */ }
   }
 
   return advanced; // πόσες προωθήθηκαν/έκλεισαν

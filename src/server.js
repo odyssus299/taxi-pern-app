@@ -91,10 +91,13 @@ const RidesRepo = require('./repos/rides.repo');
         pickupLng,
         respondByMs
       });
+
+      console.log('[WS][notifyDriverProposal]', { driverId, payload });
     };
+    
 
     // Sweep ληγμένων awaiting κάθε 1s
-    const SWEEP_EVERY_MS = 1000;
+    const SWEEP_EVERY_MS = 500;
     const SWEEP_BATCH = 200;
     sweepTimer = setInterval(async () => {
       try {

@@ -4,6 +4,7 @@ const RidesRepo = require('../../repos/rides.repo');
 const ProblemsRepo = require('../../repos/problems.repo');
 const ReviewEmail = require('../../services/reviewEmail.service');
 const { getHub } = require('../../ws'); // <— WS hub
+const { pool } = require('../../db/pool');
 
 // === Πάρε πρόταση ride για συγκεκριμένο οδηγό (polling) ===
 // GET /api/driver/:id/ride-request
@@ -88,9 +89,8 @@ exports.respondToRideRequest = async (req, res, next) => {
     return res.status(404).json({ success: false, message: 'Δεν υπάρχει ανάθεση διαδρομής.' });
   }
 
+  // ΑΠΟΔΟΧΗ
   if (response === 'accept') {
-    // Αποδοχή με TRX: μαρκάρει τον candidate ως accepted, ενημερώνει το ride (driver_id, status=ongoing)
-    // και θέτει τον οδηγό σε on_ride
     try {
       await RidesRepo.acceptByDriver(current.id, driverId);
       await DriversRepo.updateStatusById(driverId, 'on_ride');
@@ -100,45 +100,61 @@ exports.respondToRideRequest = async (req, res, next) => {
     return res.json({ success: true, message: 'Η διαδρομή έγινε δεκτή' });
   }
 
-  // Απόρριψη: μαρκάρει τον candidate ως rejected και προωθεί στον επόμενο (αν υπάρχει)
+  // ΑΠΟΡΡΙΨΗ (manual): μαρκάρει rejected & προωθεί στον επόμενο (αν υπάρχει)
+  const rideIdNow = Number(current.id);
   let forwarded = false;
   try {
-    forwarded = await RidesRepo.rejectByDriverAndAdvance(current.id, driverId);
+    const resFwd = await RidesRepo.rejectByDriverAndAdvance(rideIdNow, driverId);
+    forwarded = !!resFwd; // ο wrapper σου επιστρέφει boolean
     await DriversRepo.updateStatusById(driverId, 'available');
   } catch {
     return next(new HttpError('Προέκυψε σφάλμα κατά την ενημέρωση διαδρομής.', 500));
   }
 
-   // WS PUSH στον νέο awaiting driver (αν υπάρχει)
+  // WS PUSH:
   try {
     const ws = (typeof getHub === 'function') ? getHub() : null;
-    if (ws && typeof ws.notifyDriverProposal === 'function') {
-      // Βρες ποιος είναι τώρα awaiting για το συγκεκριμένο ride
-      let awaiting = null;
-      if (typeof RidesRepo.getAwaitingCandidate === 'function') {
-        awaiting = await RidesRepo.getAwaitingCandidate(rideId);
-      } else if (typeof RidesRepo.listCandidates === 'function') {
-        const list = await RidesRepo.listCandidates(rideId);
-        awaiting = (list || []).find(c => String(c.status || c.candidate_status) === 'awaiting_response');
+    if (ws) {
+      // 1) Κλείσε αμέσως το modal του τρέχοντος οδηγού
+      if (typeof ws.notifyDriverProposalExpired === 'function') {
+        ws.notifyDriverProposalExpired(driverId, { rideId: String(rideIdNow) });
+        console.log('[WS][reject] expired -> driver', driverId, 'ride', String(rideIdNow));
       }
-      if (awaiting) {
-        const nextDriverId = Number(awaiting.driverId || awaiting.driver_id || awaiting.id);
-        if (Number.isFinite(nextDriverId)) {
-          // θες pickup coords -> φέρε το ride για καθαρά payload
-          let rideRow = null;
-          if (typeof RidesRepo.findById === 'function') {
-            try { rideRow = await RidesRepo.findById(rideId); } catch {}
-          }
+
+      // 2) Αν προωθήθηκε, στείλε proposal στον επόμενο με σωστό payload από ΒΔ
+      if (forwarded && typeof ws.notifyDriverProposal === 'function') {
+        const { rows } = await pool.query(
+          `
+          SELECT rc.driver_id, rc.expires_at, r.pickup_lat, r.pickup_lng
+          FROM public.ride_candidates rc
+          JOIN public.rides r ON r.id = rc.ride_id
+          WHERE rc.ride_id = $1
+            AND rc.status  = 'awaiting_response'
+          ORDER BY rc.assigned_at DESC NULLS LAST, rc.position ASC
+          LIMIT 1
+          `,
+          [rideIdNow]
+        );
+        const nextRow = rows[0];
+        if (nextRow && Number.isFinite(Number(nextRow.driver_id))) {
+          const nextDriverId = Number(nextRow.driver_id);
+          const respondByMs = nextRow.expires_at ? new Date(nextRow.expires_at).getTime() : null;
+
           ws.notifyDriverProposal(nextDriverId, {
-            rideId: String(rideId),
-            pickupLat: Number(rideRow?.pickup_lat ?? rideRow?.pickupLat ?? 0),
-            pickupLng: Number(rideRow?.pickup_lng ?? rideRow?.pickupLng ?? 0),
-            respondByMs: Date.now() + 20_000
+            rideId: String(rideIdNow),
+            pickupLat: Number(nextRow.pickup_lat),
+            pickupLng: Number(nextRow.pickup_lng),
+            respondByMs
           });
+          console.log('[WS][reject] proposal -> driver', nextDriverId, 'ride', String(rideIdNow), 'until', respondByMs);
+        } else {
+          console.log('[WS][reject] no awaiting candidate found for ride', rideIdNow);
         }
       }
     }
-  } catch (_) { /* σιωπηλά */ }
+  } catch (_) {
+    // σιωπηλά
+  }
 
   return res.json({
     success: true,
@@ -147,6 +163,7 @@ exports.respondToRideRequest = async (req, res, next) => {
       : 'Απορρίφθηκε. Δεν υπάρχουν άλλοι διαθέσιμοι οδηγοί.'
   });
 };
+
 
 exports.getActiveRide = async (req, res, next) => {
   const driverId = parseInt(String(req.params.id), 10);

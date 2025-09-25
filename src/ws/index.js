@@ -150,6 +150,12 @@ function initWs(httpServer) {
     io,
     notifyDriverProposal(driverId, payload) {
       io.to(`driver:${driverId}`).emit('ride:proposal', payload);
+      console.log('[WS] emitting ride:proposal to', `driver:${driverId}`, payload);
+    },
+    notifyDriverProposalExpired(driverId, payload) {
+      // payload: { rideId }
+      io.to(`driver:${driverId}`).emit('ride:proposal:expired', payload);
+      console.log('[WS] emitting ride:proposal:expired to', `driver:${driverId}`, payload);
     },
     pingDriverPosition(driverId, payload) {
       io.to(`driver:${driverId}`).emit('driver:pos:ping', payload);
